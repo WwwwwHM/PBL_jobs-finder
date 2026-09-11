@@ -1,0 +1,40 @@
+flowchart LR
+    subgraph 输入 [输入]
+        I1[PDF简历]
+        I2[目标岗位]
+        I3[用户回答]
+    end
+
+    subgraph 处理 [处理]
+        P1[PyPDF2解析]
+        P2[阿里云Embedding]
+        P3[ChromaDB检索]
+        P4[GLM-4-Flash生成]
+    end
+
+    subgraph 输出 [输出]
+        O1[诊断报告]
+        O2[面试问题]
+        O3[面试报告]
+    end
+
+    subgraph 存储 [存储]
+        S1[(SQLite)]
+        S2[(ChromaDB)]
+        S3[(文件系统)]
+    end
+
+    I1 --> P1
+    P1 --> S3
+    I2 --> P4
+    P1 --> P4
+    I3 --> P4
+    
+    P2 --> P3
+    P3 --> P4
+    
+    P4 --> O1 & O2 & O3
+    O1 & O2 & O3 --> S1
+    O2 --> P4
+    
+    P3 -.->|向量索引| S2

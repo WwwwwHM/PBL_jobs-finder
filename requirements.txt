@@ -1,0 +1,23 @@
+# ===== 核心框架 =====
+gradio==4.44.1          # UI + API 一体化
+fastapi==0.110.0        # Gradio 底层依赖
+uvicorn==0.27.0         # ASGI 服务器
+pydantic==2.6.0         # 数据验证
+
+# ===== 数据库 =====
+sqlalchemy==2.0.25      # ORM
+chromadb==0.5.0         # 向量数据库
+
+# ===== PDF处理 =====
+PyPDF2==3.0.1           # 基础PDF解析
+pdfplumber==0.10.3      # 增强版PDF解析（保留排版）
+
+# ===== AI 调用 =====
+openai==1.30.0          # 统一调用智谱/文心（兼容OpenAI接口）
+zhipuai==2.0.1          # 智谱官方SDK（备选）
+requests==2.31.0        # HTTP请求
+
+# ===== 工具库 =====
+python-dotenv==1.0.0    # 环境变量管理
+pyyaml==6.0.1           # Prompt配置文件解析
+python-multipart==0.0.9 # 文件上传支持

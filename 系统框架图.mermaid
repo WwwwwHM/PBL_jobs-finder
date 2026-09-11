@@ -1,0 +1,52 @@
+graph TB
+    subgraph 用户层 [用户接入层]
+        U1[浏览器<br>Gradio Web界面]
+        U2[微信小程序/H5<br>gradio_client调用]
+    end
+
+    subgraph 应用层 [Gradio应用层 - Python/FastAPI]
+        direction TB
+        
+        subgraph 网关 [网关与基础设施]
+            G1[Gradio路由管理<br>gr.Blocks]
+            G2[鉴权中间件<br>Token验证]
+            G3[配额限流器<br>Redis/内存计数]
+        end
+        
+        subgraph 业务 [业务模块]
+            B1[简历诊断模块<br>resume_diagnosis]
+            B2[模拟面试模块<br>interview_agent]
+            B3[能力对标模块<br>analytics]
+        end
+        
+        subgraph 工具 [工具层]
+            T1[简历解析器<br>PyPDF2+pdfplumber]
+            T2[Prompt管理器<br>prompts.yaml]
+            T3[向量检索器<br>ChromaDB]
+        end
+    end
+
+    subgraph AI层 [AI能力层 - 云端API]
+        A1[智谱 GLM-4-Flash<br>文本生成/对话]
+        A2[阿里云 qwen3.7<br>text-embedding]
+    end
+
+    subgraph 数据层 [数据存储层]
+        D1[(SQLite<br>用户/记录)]
+        D2[(ChromaDB<br>面试题向量库)]
+        D3[(文件系统<br>上传简历PDF)]
+    end
+
+    U1 --> G1
+    U2 --> G1
+    G1 --> G2 --> G3
+    G3 --> B1 & B2 & B3
+    B1 --> T1 & T2
+    B2 --> T2 & T3
+    B3 --> T3
+    T1 --> D3
+    T2 --> A1
+    T3 --> A2
+    T3 --> D2
+    B1 & B2 & B3 --> D1
+    A1 --> A2
