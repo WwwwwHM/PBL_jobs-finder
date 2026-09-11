@@ -1,13 +1,28 @@
 [project]
 name = "pbl-jobs-finder"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-powered resume diagnosis and mock interview assistant"
 readme = "README.md"
 authors = [
     { name = "WwwwwHM", email = "231060382@hdu.edu.cn" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "chromadb==0.5.0",
+    "fastapi==0.110.0",
+    "gradio==4.44.1",
+    "openai==1.30.0",
+    "pdfplumber==0.10.3",
+    "pydantic==2.6.0",
+    "PyPDF2==3.0.1",
+    "python-dotenv==1.0.0",
+    "python-multipart==0.0.9",
+    "PyYAML==6.0.1",
+    "requests==2.31.0",
+    "sqlalchemy==2.0.25",
+    "uvicorn==0.27.0",
+    "zhipuai==2.0.1",
+]
 
 [project.scripts]
 pbl-jobs-finder = "pbl_jobs_finder:main"
