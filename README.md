@@ -7,8 +7,9 @@
 - Gradio 登录页和三个业务 Tab 已完成。
 - 后端工程结构、环境配置和 SQLite 数据层已完成。
 - 验证码、Token 鉴权、LocalStorage 登录态恢复和退出清理已接入。
-- 每日共享配额服务已完成，支持每日 00:00 重置、并发限制和失败回滚；将在简历诊断和模拟面试业务接入时调用。
-- PDF 解析和 AI 服务尚未接入。
+- 简历诊断已接入 PDF/文本输入、GLM 结构化诊断、完整优化稿编辑与 Word 简历导出。
+- 每日共享配额服务已接入简历诊断，支持每日 00:00 重置、并发限制和失败回滚；导出 Word 不重复扣除配额。
+- 模拟面试和历史记录尚未接入。
 
 ## 环境准备
 
@@ -27,6 +28,17 @@ Copy-Item .env.example .env
 
 `.env` 包含本地密钥，不会被 Git 提交。
 
+要使用简历诊断，请在 `.env` 中填写智谱 API Key：
+
+```dotenv
+ZHIPU_API_KEY=你的智谱APIKey
+ZHIPU_MODEL=glm-4-flash
+ZHIPU_TIMEOUT_SECONDS=30
+ZHIPU_MAX_RETRIES=2
+```
+
+简历诊断支持 10 MB 以内的 PDF，并依次使用 PyPDF2 和 pdfplumber 提取文本；如果 PDF 是扫描件或无法提取文本，也可以直接粘贴简历内容。诊断结果包含岗位匹配度、缺失关键词、修改建议和 STAR 改写示例。诊断完成后可编辑完整优化稿，再生成并下载 `.docx` 文件。模型被明确要求不得新增经历或伪造数据，缺少量化信息时会保留待补充占位符。模型调用失败时会回滚本次配额占用，不会保存不完整记录。
+
 ## 初始化后端
 
 ```powershell
@@ -38,6 +50,7 @@ python -m pbl_jobs_finder
 ```text
 data/
 ├── job_assistant.db
+├── exports/
 ├── uploads/
 └── chroma_db/
 ```

@@ -14,13 +14,25 @@ from pbl_jobs_finder.modules.quota import (
     QuotaStatus,
     quota_service,
 )
+from pbl_jobs_finder.modules.resume_diagnosis import (
+    DiagnosisOutcome,
+    ResumeDiagnosis,
+    ResumeDiagnosisService,
+    diagnose_resume,
+    optimize_resume,
+)
 
 __all__ = [
     "AuthService",
     "AuthenticationError",
+    "DiagnosisOutcome",
     "QuotaExceededError",
     "QuotaService",
     "QuotaStatus",
+    "ResumeDiagnosis",
+    "ResumeDiagnosisService",
+    "diagnose_resume",
+    "optimize_resume",
     "quota_service",
     "revoke_token",
     "send_verification_code",

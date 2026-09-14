@@ -10,7 +10,20 @@ from pbl_jobs_finder.modules.auth import (
     verify_login,
     verify_token,
 )
-from pbl_jobs_finder.modules.quota import AuthenticationError, quota_service
+from pbl_jobs_finder.modules.quota import (
+    AuthenticationError,
+    QuotaExceededError,
+    quota_service,
+)
+from pbl_jobs_finder.modules.resume_diagnosis import (
+    ResumeAccessError,
+    ResumeDiagnosisService,
+    ResumeParseError,
+    ResumeResponseError,
+    ResumeValidationError,
+)
+from pbl_jobs_finder.modules.resume_export import ResumeExportError
+from pbl_jobs_finder.utils.llm_client import LLMConfigurationError, LLMServiceError
 
 STORAGE_KEY = "pbl_jobs_finder.auth_token"
 READ_TOKEN_JS = f"""() => {{
@@ -24,6 +37,7 @@ WRITE_TOKEN_JS = f"""(token) => {{
     }} catch {{ /* Session-only login when storage is unavailable. */ }}
     return token;
 }}"""
+resume_service = ResumeDiagnosisService()
 
 
 def request_code(phone: str) -> str:
@@ -85,6 +99,117 @@ def logout(token: str) -> tuple:
 
     revoke_token(token)
     return (*_logged_out("已退出登录"), "", "")
+
+
+def diagnose_resume_callback(
+    uploaded_file: str | None,
+    pasted_text: str,
+    position: str,
+    token: str,
+) -> tuple:
+    """Run one diagnosis and expose the editable optimized draft."""
+
+    try:
+        outcome = resume_service.diagnose(
+            token=token,
+            position=position,
+            uploaded_file=uploaded_file,
+            pasted_text=pasted_text,
+        )
+        remaining = quota_service.status(token).remaining
+    except (
+        AuthenticationError,
+        LLMConfigurationError,
+        LLMServiceError,
+        QuotaExceededError,
+        ResumeParseError,
+        ResumeResponseError,
+        ResumeValidationError,
+    ) as exc:
+        return (
+            f"**诊断未完成：** {exc}",
+            "",
+            "",
+            "",
+            "",
+            None,
+            _quota_label(token),
+            gr.update(visible=False),
+            gr.update(value=None, visible=False),
+            "",
+        )
+
+    diagnosis = outcome.diagnosis
+    keywords = "、".join(diagnosis.missing_keywords) or "未发现明显缺失关键词"
+    suggestions = (
+        f"{diagnosis.suggestions}\n\n### STAR 改写示例\n{diagnosis.star_examples}"
+    )
+    return (
+        "诊断已完成，优化稿可继续编辑后导出。",
+        f"## {diagnosis.score} / 100",
+        keywords,
+        suggestions,
+        diagnosis.optimized_text,
+        outcome.record_id,
+        f"今日剩余 {remaining} / {quota_service.limit} 次",
+        gr.update(visible=True),
+        gr.update(value=None, visible=False),
+        "",
+    )
+
+
+def generate_resume_callback(
+    token: str,
+    record_id: int | str | None,
+    optimized_text: str,
+) -> tuple:
+    """Generate a downloadable DOCX from the user's final edited draft."""
+
+    try:
+        destination = resume_service.export_optimized_resume(
+            token=token,
+            record_id=record_id,
+            optimized_text=optimized_text,
+        )
+    except (
+        AuthenticationError,
+        ResumeAccessError,
+        ResumeExportError,
+        ResumeValidationError,
+        ValueError,
+    ) as exc:
+        return gr.update(value=None, visible=False), f"**生成失败：** {exc}"
+    return (
+        gr.update(value=str(destination), visible=True),
+        "新版 Word 简历已生成，可直接下载。",
+    )
+
+
+def _quota_label(token: str) -> str:
+    try:
+        status = quota_service.status(token)
+    except AuthenticationError:
+        return ""
+    return f"今日剩余 {status.remaining} / {status.limit} 次"
+
+
+def clear_resume_workspace() -> tuple:
+    """Remove prior-user resume data from a reused browser session."""
+
+    return (
+        None,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        None,
+        gr.update(visible=False),
+        gr.update(value=None, visible=False),
+        "",
+    )
 
 
 def build_app() -> gr.Blocks:
@@ -174,6 +299,18 @@ def build_app() -> gr.Blocks:
         font-size: 19px;
     }
 
+    .resume-score h2 {
+        color: #137a52;
+        font-size: 25px;
+        margin: 0;
+    }
+
+    .result-section {
+        border-top: 1px solid var(--line);
+        margin-top: 16px;
+        padding-top: 18px;
+    }
+
     .primary-button {
         background: var(--brand) !important;
         border-color: var(--brand) !important;
@@ -212,6 +349,7 @@ def build_app() -> gr.Blocks:
         css=css,
     ) as app:
         token_state = gr.State("")
+        resume_record_state = gr.State(None)
         browser_token = gr.Textbox(visible=False)
         with gr.Column(elem_id="login_view", elem_classes="auth-shell") as login_view:
             gr.Markdown("AI JOB ASSISTANT", elem_classes="brand-mark")
@@ -254,10 +392,63 @@ def build_app() -> gr.Blocks:
                 with gr.Tab("📄 简历诊断"), gr.Column(elem_classes="placeholder-panel"):
                     gr.Markdown("## 简历诊断")
                     gr.Markdown(
-                        "上传简历并输入目标岗位，获取匹配度、关键词缺口和 STAR 优化建议。",
+                        "上传 PDF 或粘贴简历文本，获取诊断结果和可编辑的完整优化稿。",
                         elem_classes="section-intro",
                     )
-                    gr.Markdown("简历诊断功能将在业务模块接入后启用。")
+                    with gr.Row():
+                        resume_file = gr.File(
+                            label="上传 PDF 简历",
+                            file_types=[".pdf"],
+                            type="filepath",
+                            scale=1,
+                        )
+                        target_position = gr.Textbox(
+                            label="目标岗位",
+                            placeholder="例如：Java 后端开发工程师",
+                            max_lines=1,
+                            max_length=100,
+                            scale=1,
+                        )
+                    pasted_resume = gr.Textbox(
+                        label="或粘贴简历文本",
+                        placeholder="PDF 无法解析时可粘贴文本；填写后将优先使用这里的内容。",
+                        lines=7,
+                        max_lines=16,
+                    )
+                    diagnose_button = gr.Button(
+                        "开始诊断", variant="primary", elem_classes="primary-button"
+                    )
+                    resume_status = gr.Markdown()
+
+                    with gr.Column(
+                        visible=False,
+                        elem_classes="result-section",
+                    ) as resume_results:
+                        with gr.Row():
+                            with gr.Column(scale=1):
+                                gr.Markdown("### 岗位匹配度")
+                                score_output = gr.Markdown(elem_classes="resume-score")
+                            with gr.Column(scale=2):
+                                gr.Markdown("### 建议补充的关键词")
+                                keyword_output = gr.Markdown()
+                        gr.Markdown("### 修改建议与 STAR 示例")
+                        suggestions_output = gr.Markdown()
+                        optimized_resume = gr.Textbox(
+                            label="完整优化稿",
+                            info="可在生成前继续修改；请将方括号占位内容替换为真实信息。",
+                            lines=18,
+                            max_lines=30,
+                            interactive=True,
+                        )
+                        with gr.Row():
+                            generate_resume_button = gr.Button(
+                                "生成新版简历", variant="primary"
+                            )
+                            download_resume_button = gr.DownloadButton(
+                                "下载 Word 简历",
+                                visible=False,
+                            )
+                        export_status = gr.Markdown()
 
                 with gr.Tab("🎯 模拟面试"), gr.Column(elem_classes="placeholder-panel"):
                     gr.Markdown("## 模拟面试")
@@ -306,6 +497,23 @@ def build_app() -> gr.Blocks:
             inputs=browser_token,
             outputs=browser_token,
             js=WRITE_TOKEN_JS,
+        ).then(
+            clear_resume_workspace,
+            outputs=[
+                resume_file,
+                target_position,
+                pasted_resume,
+                resume_status,
+                score_output,
+                keyword_output,
+                suggestions_output,
+                optimized_resume,
+                resume_record_state,
+                resume_results,
+                download_resume_button,
+                export_status,
+            ],
+            api_name=False,
         )
         app.load(
             restore_login,
@@ -318,6 +526,30 @@ def build_app() -> gr.Blocks:
             inputs=browser_token,
             outputs=browser_token,
             js=WRITE_TOKEN_JS,
+        )
+
+        diagnose_button.click(
+            diagnose_resume_callback,
+            inputs=[resume_file, pasted_resume, target_position, token_state],
+            outputs=[
+                resume_status,
+                score_output,
+                keyword_output,
+                suggestions_output,
+                optimized_resume,
+                resume_record_state,
+                quota_label,
+                resume_results,
+                download_resume_button,
+                export_status,
+            ],
+            api_name=False,
+        )
+        generate_resume_button.click(
+            generate_resume_callback,
+            inputs=[token_state, resume_record_state, optimized_resume],
+            outputs=[download_resume_button, export_status],
+            api_name=False,
         )
 
     return app

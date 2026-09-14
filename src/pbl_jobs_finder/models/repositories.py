@@ -80,6 +80,10 @@ def update_resume_record(session: Session, record_id: int, **changes: Any) -> Re
     return record
 
 
+def get_resume_record(session: Session, record_id: int) -> ResumeRecord | None:
+    return session.get(ResumeRecord, record_id)
+
+
 def get_recent_resume_records(
     session: Session, phone: str, limit: int = 5
 ) -> list[ResumeRecord]:

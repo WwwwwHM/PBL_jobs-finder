@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import frontend
 from pbl_jobs_finder.modules.quota import AuthenticationError, QuotaStatus
+from pbl_jobs_finder.modules.resume_diagnosis import DiagnosisOutcome, ResumeDiagnosis
 
 
 class FrontendAuthTests(unittest.TestCase):
@@ -77,8 +78,59 @@ class FrontendAuthTests(unittest.TestCase):
         app = frontend.build_app()
         callbacks = {fn.fn for fn in app.fns.values() if fn.fn is not None}
         self.assertTrue(
-            {frontend.login, frontend.restore_login, frontend.logout} <= callbacks
+            {
+                frontend.diagnose_resume_callback,
+                frontend.generate_resume_callback,
+                frontend.login,
+                frontend.restore_login,
+                frontend.logout,
+            }
+            <= callbacks
         )
+
+    def test_diagnosis_callback_exposes_editable_complete_resume(self) -> None:
+        outcome = DiagnosisOutcome(
+            record_id=12,
+            diagnosis=ResumeDiagnosis(
+                score=88,
+                missing_keywords=["FastAPI"],
+                suggestions="- 增加接口设计细节",
+                star_examples="- 情境/任务：订单系统；行动：开发接口；结果：[请补充真实数据]",
+                optimized_text="# 张三\n\n## 项目经历\n- 负责订单接口",
+            ),
+        )
+        with (
+            patch.object(frontend.resume_service, "diagnose", return_value=outcome),
+            patch.object(
+                frontend.quota_service,
+                "status",
+                return_value=QuotaStatus(10, 1, date(2026, 9, 14)),
+            ),
+        ):
+            result = frontend.diagnose_resume_callback(
+                None,
+                "一份足够完整的测试简历内容",
+                "Python 后端工程师",
+                "token",
+            )
+        self.assertIn("88", result[1])
+        self.assertIn("STAR 改写示例", result[3])
+        self.assertIn("[请补充真实数据]", result[3])
+        self.assertEqual(result[4], outcome.diagnosis.optimized_text)
+        self.assertEqual(result[5], 12)
+        self.assertTrue(result[7]["visible"])
+        self.assertFalse(result[8]["visible"])
+
+    def test_generate_callback_returns_downloadable_file(self) -> None:
+        destination = "data/exports/Python_优化简历_12.docx"
+        with patch.object(
+            frontend.resume_service,
+            "export_optimized_resume",
+            return_value=destination,
+        ):
+            result = frontend.generate_resume_callback("token", 12, "# 张三")
+        self.assertEqual(result[0]["value"], destination)
+        self.assertTrue(result[0]["visible"])
 
 
 if __name__ == "__main__":
