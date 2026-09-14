@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from sqlalchemy import Engine, create_engine, event
@@ -43,7 +43,7 @@ class Database:
         Base.metadata.create_all(self.engine)
 
     @contextmanager
-    def session(self) -> Iterator[Session]:
+    def session(self) -> Generator[Session, None, None]:
         """Commit a unit of work or roll it back when an exception occurs."""
 
         session = self._session_factory()

@@ -15,6 +15,7 @@ venv/
 # Runtime data
 gradio_cached_examples/
 data/*.db
+data/*.log
 data/uploads/
 data/chroma_db/
 
