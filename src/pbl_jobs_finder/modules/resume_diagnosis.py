@@ -144,9 +144,9 @@ class ResumeDiagnosisService:
     ) -> DiagnosisOutcome:
         """Run one quota-counted diagnosis and persist its complete result."""
 
-        resume_text = self._resolve_resume_text(uploaded_file, pasted_text)
-        resume_text, position = _validate_inputs(resume_text, position)
         with self.quota.operation(token) as phone:
+            resume_text = self._resolve_resume_text(uploaded_file, pasted_text)
+            resume_text, position = _validate_inputs(resume_text, position)
             diagnosis = diagnose_resume(
                 resume_text,
                 position,

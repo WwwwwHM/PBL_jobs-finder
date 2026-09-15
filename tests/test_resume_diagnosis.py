@@ -25,6 +25,11 @@ from pbl_jobs_finder.modules.resume_diagnosis import (
     ResumeValidationError,
     diagnose_resume,
 )
+from pbl_jobs_finder.modules.resume_ocr import (
+    MAX_OCR_PAGES,
+    ResumeOCRError,
+    extract_text_from_image_pdf,
+)
 from pbl_jobs_finder.modules.resume_parser import (
     MAX_PDF_SIZE,
     ResumeParseError,
@@ -52,6 +57,32 @@ class RaisingChatClient:
 
 class APITimeoutError(Exception):
     pass
+
+
+class FakeOCRPage:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def render(self, *, scale: float) -> SimpleNamespace:
+        return SimpleNamespace(to_pil=lambda: f"page-at-{scale}")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeOCRDocument:
+    def __init__(self, page_count: int) -> None:
+        self.pages = [FakeOCRPage() for _ in range(page_count)]
+        self.closed = False
+
+    def __len__(self) -> int:
+        return len(self.pages)
+
+    def __getitem__(self, index: int) -> FakeOCRPage:
+        return self.pages[index]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _write_text_pdf(path: Path, text: str) -> None:
@@ -196,6 +227,32 @@ class ResumeDiagnosisTests(unittest.TestCase):
         fallback.assert_called_once_with(path)
         self.assertEqual(result, "张三 Python\n\n项目经历")
 
+    def test_image_pdf_falls_back_to_local_ocr(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "image-resume.pdf"
+            path.write_bytes(b"%PDF placeholder")
+            with (
+                patch(
+                    "pbl_jobs_finder.modules.resume_parser._extract_with_pypdf",
+                    return_value="",
+                ),
+                patch(
+                    "pbl_jobs_finder.modules.resume_parser._extract_with_pdfplumber",
+                    return_value="",
+                ),
+                patch(
+                    "pbl_jobs_finder.modules.resume_parser._pdf_contains_images",
+                    return_value=True,
+                ),
+                patch(
+                    "pbl_jobs_finder.modules.resume_ocr.extract_text_from_image_pdf",
+                    return_value=" 张三 \n Python 开发工程师 ",
+                ) as ocr,
+            ):
+                result = parse_resume_pdf(path)
+        ocr.assert_called_once_with(path)
+        self.assertEqual(result, "张三\nPython 开发工程师")
+
     def test_blank_pdf_prompts_for_pasted_text(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "blank.pdf"
@@ -271,6 +328,55 @@ class ZhipuChatClientTests(unittest.TestCase):
             ZhipuChatClient(api_key="secret", model="glm-test").complete(
                 "system", "user"
             )
+
+
+class ResumeOCRTests(unittest.TestCase):
+    def test_ocr_combines_recognized_lines_and_closes_resources(self) -> None:
+        document = FakeOCRDocument(2)
+        engine = Mock(
+            side_effect=[
+                ([[None, "第一页标题", 0.99], [None, "项目经历", 0.98]], None),
+                ([[None, "第二页", 0.97]], None),
+            ]
+        )
+        with patch(
+            "pbl_jobs_finder.modules.resume_ocr.pdfium.PdfDocument",
+            return_value=document,
+        ):
+            result = extract_text_from_image_pdf("resume.pdf", engine=engine)
+
+        self.assertEqual(result, "第一页标题\n项目经历\n\n第二页")
+        self.assertTrue(document.closed)
+        self.assertTrue(all(page.closed for page in document.pages))
+        self.assertEqual(engine.call_count, 2)
+
+    def test_ocr_rejects_image_pdf_over_page_limit(self) -> None:
+        document = FakeOCRDocument(MAX_OCR_PAGES + 1)
+        with (
+            patch(
+                "pbl_jobs_finder.modules.resume_ocr.pdfium.PdfDocument",
+                return_value=document,
+            ),
+            self.assertRaisesRegex(ResumeOCRError, f"最多支持 {MAX_OCR_PAGES} 页"),
+        ):
+            extract_text_from_image_pdf("resume.pdf", engine=Mock())
+        self.assertTrue(document.closed)
+
+    def test_ocr_engine_load_failure_is_actionable_and_closes_document(self) -> None:
+        document = FakeOCRDocument(1)
+        with (
+            patch(
+                "pbl_jobs_finder.modules.resume_ocr.pdfium.PdfDocument",
+                return_value=document,
+            ),
+            patch(
+                "pbl_jobs_finder.modules.resume_ocr._get_ocr_engine",
+                side_effect=RuntimeError("model missing"),
+            ),
+            self.assertRaisesRegex(ResumeOCRError, "OCR 组件加载失败"),
+        ):
+            extract_text_from_image_pdf("resume.pdf")
+        self.assertTrue(document.closed)
 
 
 class ResumeDiagnosisServiceTests(unittest.TestCase):
@@ -401,6 +507,23 @@ class ResumeDiagnosisServiceTests(unittest.TestCase):
                 token="token-a",
                 position="Python 后端工程师",
                 pasted_text="张三，五年 Python 后端经验，负责订单服务的开发、测试与维护。",
+            )
+        self.assertEqual(self.quota.status("token-a").used, 0)
+
+    def test_pdf_parse_or_ocr_failure_refunds_quota(self) -> None:
+        path = self.root / "image-resume.pdf"
+        path.write_bytes(b"%PDF placeholder")
+        with (
+            patch(
+                "pbl_jobs_finder.modules.resume_diagnosis.parse_resume_pdf",
+                side_effect=ResumeParseError("图片文字识别失败，请改用文本粘贴方式"),
+            ),
+            self.assertRaisesRegex(ResumeParseError, "图片文字识别失败"),
+        ):
+            self.service.diagnose(
+                token="token-a",
+                position="Python 后端工程师",
+                uploaded_file=path,
             )
         self.assertEqual(self.quota.status("token-a").used, 0)
 

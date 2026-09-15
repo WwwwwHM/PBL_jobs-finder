@@ -1,5 +1,6 @@
 # ===== 核心框架 =====
 gradio==4.44.1          # UI + API 一体化
+huggingface-hub==0.36.2 # 与Gradio 4.44的OAuth模块兼容
 fastapi==0.110.0        # Gradio 底层依赖
 uvicorn==0.27.0         # ASGI 服务器
 pydantic==2.6.0         # 数据验证
@@ -11,6 +12,9 @@ chromadb==0.5.0         # 向量数据库
 # ===== PDF处理 =====
 PyPDF2==3.0.1           # 基础PDF解析
 pdfplumber==0.10.3      # 增强版PDF解析（保留排版）
+pypdfium2>=5.13,<6      # 图片型PDF页面渲染
+rapidocr-onnxruntime>=1.4,<2 # 本地OCR，不上传简历图片
+numpy==1.26.4           # 保持与当前ChromaDB兼容
 
 # ===== AI 调用 =====
 openai==1.30.0          # 统一调用智谱/文心（兼容OpenAI接口）

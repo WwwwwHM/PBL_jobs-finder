@@ -21,6 +21,10 @@ from pbl_jobs_finder.modules.resume_diagnosis import (
     diagnose_resume,
     optimize_resume,
 )
+from pbl_jobs_finder.modules.resume_ocr import (
+    ResumeOCRError,
+    extract_text_from_image_pdf,
+)
 
 __all__ = [
     "AuthService",
@@ -31,7 +35,9 @@ __all__ = [
     "QuotaStatus",
     "ResumeDiagnosis",
     "ResumeDiagnosisService",
+    "ResumeOCRError",
     "diagnose_resume",
+    "extract_text_from_image_pdf",
     "optimize_resume",
     "quota_service",
     "revoke_token",

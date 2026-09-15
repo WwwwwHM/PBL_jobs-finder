@@ -50,6 +50,16 @@ def parse_resume_pdf(file_path: str | Path) -> str:
         raise ResumeParseError("PDF 解析失败，请改用文本粘贴方式") from cause
 
     text = _normalize_extracted_text(text)
+    if not text and _pdf_contains_images(path):
+        from pbl_jobs_finder.modules.resume_ocr import (
+            ResumeOCRError,
+            extract_text_from_image_pdf,
+        )
+
+        try:
+            text = _normalize_extracted_text(extract_text_from_image_pdf(path))
+        except ResumeOCRError as exc:
+            raise ResumeParseError(str(exc)) from exc
     if not text:
         raise ResumeParseError("PDF 中未识别到文字，请改用文本粘贴方式")
     if len(text) > MAX_RESUME_CHARACTERS:
@@ -77,6 +87,14 @@ def _normalize_extracted_text(value: str) -> str:
         line = re.sub(r"[ \t]+", " ", raw_line).strip()
         lines.append(line)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _pdf_contains_images(path: Path) -> bool:
+    try:
+        reader = PdfReader(str(path), strict=False)
+        return any(page.images for page in reader.pages)
+    except Exception:  # noqa: BLE001 - extraction already supplied the user-facing error
+        return False
 
 
 __all__ = ["MAX_PDF_SIZE", "MAX_RESUME_CHARACTERS", "ResumeParseError", "parse_resume_pdf"]
