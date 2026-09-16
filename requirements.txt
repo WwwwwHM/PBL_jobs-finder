@@ -24,5 +24,7 @@ requests==2.31.0        # HTTP请求
 # ===== 工具库 =====
 python-dotenv==1.0.0    # 环境变量管理
 python-docx==1.1.2      # 生成可编辑的新版 Word 简历
+playwright==1.47.0      # 固定 HTML 模板打印为 A4 PDF
+Pillow>=10.4,<12        # 上传照片解码、方向修正与安全重编码
 pyyaml==6.0.1           # Prompt配置文件解析
 python-multipart==0.0.9 # 文件上传支持

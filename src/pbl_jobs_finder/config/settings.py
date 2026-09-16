@@ -44,6 +44,9 @@ class Settings:
     uploads_dir: Path
     exports_dir: Path
     chroma_dir: Path
+    log_dir: Path
+    log_level: str
+    log_backup_count: int
     database_url: str
     app_env: str
     timezone: str
@@ -62,6 +65,7 @@ class Settings:
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
         self.exports_dir.mkdir(parents=True, exist_ok=True)
         self.chroma_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache(maxsize=1)
@@ -73,6 +77,13 @@ def get_settings() -> Settings:
     configured_exports_dir = os.getenv("EXPORTS_DIR", "").strip()
     exports_dir = Path(configured_exports_dir or (data_dir / "exports")).resolve()
     chroma_dir = Path(os.getenv("CHROMA_DIR", data_dir / "chroma_db")).resolve()
+    configured_log_dir = os.getenv("LOG_DIR", "").strip()
+    log_dir = Path(configured_log_dir or (data_dir / "logs")).resolve()
+    log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        raise ValueError(
+            "LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR, or CRITICAL"
+        )
     default_database_url = f"sqlite:///{(data_dir / 'job_assistant.db').as_posix()}"
     database_url = os.getenv("DATABASE_URL", "").strip() or default_database_url
 
@@ -82,6 +93,9 @@ def get_settings() -> Settings:
         uploads_dir=uploads_dir,
         exports_dir=exports_dir,
         chroma_dir=chroma_dir,
+        log_dir=log_dir,
+        log_level=log_level,
+        log_backup_count=_positive_int("LOG_BACKUP_COUNT", 14),
         database_url=database_url,
         app_env=os.getenv("APP_ENV", "development"),
         timezone=os.getenv("APP_TIMEZONE", "Asia/Hong_Kong"),

@@ -40,7 +40,10 @@ flowchart TB
     AA --> AB{生成成功?}
     AB -->|否| AC[提示重试并保留输入]
     AC --> V
-    AB -->|是| AD[展示可编辑新版稿]
-    AD --> AE[用户确认并导出Word]
-    AE --> AF[更新当前诊断记录]
-    AF --> AG([结束])
+    AB -->|是| AD[校验新版简历JSON Schema]
+    AD --> AE[固定模板渲染并转义HTML CSS]
+    AE --> AF[Playwright打印A4 PDF]
+    AF --> AG{PDF生成成功?}
+    AG -->|否| AC
+    AG -->|是| AH[保存结构化JSON并提供PDF下载]
+    AH --> AI([结束])

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import gradio as gr
 
 from pbl_jobs_finder.modules.auth import (
@@ -19,11 +21,15 @@ from pbl_jobs_finder.modules.resume_diagnosis import (
     ResumeAccessError,
     ResumeDiagnosisService,
     ResumeParseError,
+    ResumePDFError,
     ResumeResponseError,
     ResumeValidationError,
 )
-from pbl_jobs_finder.modules.resume_export import ResumeExportError
+from pbl_jobs_finder.modules.resume_pdf import document_to_markdown
 from pbl_jobs_finder.utils.llm_client import LLMConfigurationError, LLMServiceError
+from pbl_jobs_finder.utils.logging import configure_logging, report_exception
+
+logger = logging.getLogger(__name__)
 
 STORAGE_KEY = "pbl_jobs_finder.auth_token"
 READ_TOKEN_JS = f"""() => {{
@@ -47,15 +53,23 @@ def request_code(phone: str) -> str:
     service; this callback only translates its result into UI text.
     """
 
-    phone = (phone or "").strip()
-    _, message = send_verification_code(phone)
-    return message
+    try:
+        phone = (phone or "").strip()
+        _, message = send_verification_code(phone)
+        return message
+    except Exception as exc:  # noqa: BLE001 - callback must return a stable UI response
+        error_id = report_exception(logger, "auth.request_code", exc)
+        return f"验证码发送失败，请稍后重试（错误编号：{error_id}）"
 
 
 def login(phone: str, code: str) -> tuple:
     """Authenticate and provide the token to server state and the browser."""
 
-    token, message = verify_login((phone or "").strip(), (code or "").strip())
+    try:
+        token, message = verify_login((phone or "").strip(), (code or "").strip())
+    except Exception as exc:  # noqa: BLE001 - callback must return a stable UI response
+        error_id = report_exception(logger, "auth.login", exc)
+        return _logged_out(f"登录失败，请稍后重试（错误编号：{error_id}）")
     if token is None:
         return _logged_out(message)
     return restore_login(token)
@@ -76,13 +90,16 @@ def _logged_out(message: str = "") -> tuple:
 def restore_login(token: str) -> tuple:
     """Never trust a browser token or identity without backend validation."""
 
-    user = verify_token(token)
-    if user is None:
-        return _logged_out("登录已失效，请重新登录" if token else "")
     try:
+        user = verify_token(token)
+        if user is None:
+            return _logged_out("登录已失效，请重新登录" if token else "")
         status = quota_service.status(token)
     except AuthenticationError:
         return _logged_out("登录已失效，请重新登录")
+    except Exception as exc:  # noqa: BLE001 - callback must return a stable UI response
+        error_id = report_exception(logger, "auth.restore_login", exc)
+        return _logged_out(f"登录状态恢复失败（错误编号：{error_id}）")
     return (
         gr.update(visible=False),
         gr.update(visible=True),
@@ -97,8 +114,13 @@ def restore_login(token: str) -> tuple:
 def logout(token: str) -> tuple:
     """Revoke backend credentials and clear both browser and session state."""
 
-    revoke_token(token)
-    return (*_logged_out("已退出登录"), "", "")
+    try:
+        revoke_token(token)
+        message = "已退出登录"
+    except Exception as exc:  # noqa: BLE001 - local state is still cleared
+        error_id = report_exception(logger, "auth.logout", exc)
+        message = f"本地登录状态已清除（错误编号：{error_id}）"
+    return (*_logged_out(message), "", "")
 
 
 def diagnose_resume_callback(
@@ -126,8 +148,15 @@ def diagnose_resume_callback(
         ResumeResponseError,
         ResumeValidationError,
     ) as exc:
+        reference = _callback_error_reference(
+            "resume.diagnose",
+            exc,
+            has_upload=bool(uploaded_file),
+            pasted_text_chars=len(pasted_text or ""),
+            position_chars=len(position or ""),
+        )
         return (
-            f"**诊断未完成：** {exc}",
+            f"**诊断未完成：** {exc}{reference}",
             "",
             "",
             "",
@@ -135,8 +164,24 @@ def diagnose_resume_callback(
             None,
             _quota_label(token),
             gr.update(visible=False),
+            "",
+            gr.update(value=None),
+            gr.update(visible=False),
             gr.update(value=None, visible=False),
             "",
+        )
+    except Exception as exc:  # noqa: BLE001 - keep unexpected failures debuggable
+        error_id = report_exception(
+            logger,
+            "resume.diagnose",
+            exc,
+            has_upload=bool(uploaded_file),
+            pasted_text_chars=len(pasted_text or ""),
+            position_chars=len(position or ""),
+        )
+        return _diagnosis_failure(
+            f"系统异常，请稍后重试（错误编号：{error_id}）",
+            token,
         )
 
     diagnosis = outcome.diagnosis
@@ -145,7 +190,7 @@ def diagnose_resume_callback(
         f"{diagnosis.suggestions}\n\n### STAR 改写示例\n{diagnosis.star_examples}"
     )
     return (
-        "诊断已完成，优化稿可继续编辑后导出。",
+        "诊断已完成。请检查当前优化稿，再生成新版 PDF 简历。",
         f"## {diagnosis.score} / 100",
         keywords,
         suggestions,
@@ -153,8 +198,47 @@ def diagnose_resume_callback(
         outcome.record_id,
         f"今日剩余 {remaining} / {quota_service.limit} 次",
         gr.update(visible=True),
+        "",
+        gr.update(value=None),
+        gr.update(visible=False),
         gr.update(value=None, visible=False),
         "",
+    )
+
+
+def open_supplement_callback(record_id: int | str | None) -> tuple:
+    """Open the supplemental-experience panel for a completed diagnosis."""
+
+    if not record_id:
+        return (
+            gr.update(visible=False),
+            "",
+            gr.update(value=None, visible=False),
+            "**请先完成一次简历诊断。**",
+        )
+    return (
+        gr.update(visible=True),
+        "",
+        gr.update(value=None, visible=False),
+        "",
+    )
+
+
+def cancel_supplement_callback() -> tuple:
+    """Close and clear the supplemental panel without changing the draft."""
+
+    return gr.update(visible=False), "", ""
+
+
+def begin_resume_generation() -> tuple:
+    """Disable panel actions before the queued model and PDF work begins."""
+
+    disabled = gr.update(interactive=False)
+    return (
+        disabled,
+        disabled,
+        "正在整理补充信息并生成 PDF，请稍候...",
+        gr.update(value=None, visible=False),
     )
 
 
@@ -162,26 +246,67 @@ def generate_resume_callback(
     token: str,
     record_id: int | str | None,
     optimized_text: str,
+    supplemental_experience: str,
+    photo_file: str | None = None,
 ) -> tuple:
-    """Generate a downloadable DOCX from the user's final edited draft."""
+    """Generate a structured resume and downloadable PDF."""
 
     try:
-        destination = resume_service.export_optimized_resume(
+        outcome = resume_service.generate_pdf_resume(
             token=token,
             record_id=record_id,
             optimized_text=optimized_text,
+            supplemental_experience=supplemental_experience,
+            photo_file=photo_file,
         )
     except (
         AuthenticationError,
+        LLMConfigurationError,
+        LLMServiceError,
         ResumeAccessError,
-        ResumeExportError,
+        ResumePDFError,
+        ResumeResponseError,
         ResumeValidationError,
         ValueError,
     ) as exc:
-        return gr.update(value=None, visible=False), f"**生成失败：** {exc}"
+        reference = _callback_error_reference(
+            "resume.generate_pdf",
+            exc,
+            optimized_text_chars=len(optimized_text or ""),
+            record_id=record_id if isinstance(record_id, int) else "invalid",
+            supplemental_chars=len(supplemental_experience or ""),
+            has_photo=bool(photo_file),
+        )
+        enabled = gr.update(interactive=True)
+        return (
+            gr.update(visible=True),
+            gr.update(),
+            gr.update(value=None, visible=False),
+            f"**生成失败：** {exc}{reference}",
+            gr.update(),
+            enabled,
+            enabled,
+        )
+    except Exception as exc:  # noqa: BLE001 - keep unexpected failures debuggable
+        error_id = report_exception(
+            logger,
+            "resume.generate_pdf",
+            exc,
+            optimized_text_chars=len(optimized_text or ""),
+            record_id=record_id if isinstance(record_id, int) else "invalid",
+            supplemental_chars=len(supplemental_experience or ""),
+            has_photo=bool(photo_file),
+        )
+        return _generation_failure(f"系统异常，请稍后重试（错误编号：{error_id}）")
+    enabled = gr.update(interactive=True)
     return (
-        gr.update(value=str(destination), visible=True),
-        "新版 Word 简历已生成，可直接下载。",
+        gr.update(visible=False),
+        "",
+        gr.update(value=str(outcome.pdf_path), visible=True),
+        "新版 PDF 简历已生成，可直接下载。",
+        document_to_markdown(outcome.document),
+        enabled,
+        enabled,
     )
 
 
@@ -190,7 +315,60 @@ def _quota_label(token: str) -> str:
         status = quota_service.status(token)
     except AuthenticationError:
         return ""
+    except Exception as exc:  # noqa: BLE001 - never hide the original callback error
+        report_exception(logger, "quota.status", exc)
+        return ""
     return f"今日剩余 {status.remaining} / {status.limit} 次"
+
+
+def _callback_error_reference(
+    operation: str,
+    error: Exception,
+    **context: object,
+) -> str:
+    if isinstance(
+        error,
+        (AuthenticationError, QuotaExceededError, ResumeValidationError),
+    ):
+        logger.warning(
+            "Operation rejected operation=%s exception=%s",
+            operation,
+            type(error).__name__,
+        )
+        return ""
+    error_id = report_exception(logger, operation, error, **context)
+    return f"\n\n错误编号：`{error_id}`"
+
+
+def _diagnosis_failure(message: str, token: str) -> tuple:
+    return (
+        f"**诊断未完成：** {message}",
+        "",
+        "",
+        "",
+        "",
+        None,
+        _quota_label(token),
+        gr.update(visible=False),
+        "",
+        gr.update(value=None),
+        gr.update(visible=False),
+        gr.update(value=None, visible=False),
+        "",
+    )
+
+
+def _generation_failure(message: str) -> tuple:
+    enabled = gr.update(interactive=True)
+    return (
+        gr.update(visible=True),
+        gr.update(),
+        gr.update(value=None, visible=False),
+        f"**生成失败：** {message}",
+        gr.update(),
+        enabled,
+        enabled,
+    )
 
 
 def clear_resume_workspace() -> tuple:
@@ -207,6 +385,9 @@ def clear_resume_workspace() -> tuple:
         "",
         None,
         gr.update(visible=False),
+        "",
+        gr.update(value=None),
+        gr.update(visible=False),
         gr.update(value=None, visible=False),
         "",
     )
@@ -214,6 +395,8 @@ def clear_resume_workspace() -> tuple:
 
 def build_app() -> gr.Blocks:
     """Build and return the Gradio application without starting a server."""
+
+    configure_logging()
 
     css = """
     :root {
@@ -309,6 +492,31 @@ def build_app() -> gr.Blocks:
         border-top: 1px solid var(--line);
         margin-top: 16px;
         padding-top: 18px;
+    }
+
+    .supplement-overlay {
+        background: rgba(23, 32, 51, 0.54);
+        inset: 0;
+        overflow-y: auto;
+        padding: 8vh 18px 24px;
+        position: fixed;
+        z-index: 1000;
+    }
+
+    .supplement-modal {
+        background: var(--panel-bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: 0 20px 48px rgba(16, 24, 40, 0.2);
+        margin: 0 auto;
+        max-width: 720px;
+        padding: 22px;
+        width: 100%;
+    }
+
+    .supplement-modal h3 {
+        font-size: 16px;
+        margin: 0 0 6px;
     }
 
     .primary-button {
@@ -434,21 +642,52 @@ def build_app() -> gr.Blocks:
                         gr.Markdown("### 修改建议与 STAR 示例")
                         suggestions_output = gr.Markdown()
                         optimized_resume = gr.Textbox(
-                            label="完整优化稿",
-                            info="可在生成前继续修改；请将方括号占位内容替换为真实信息。",
+                            label="当前优化稿",
+                            info="生成 PDF 前可继续修改；请将方括号占位内容替换为真实信息。",
                             lines=18,
                             max_lines=30,
                             interactive=True,
                         )
                         with gr.Row():
                             generate_resume_button = gr.Button(
-                                "生成新版简历", variant="primary"
+                                "生成新版 PDF 简历", variant="primary"
                             )
                             download_resume_button = gr.DownloadButton(
-                                "下载 Word 简历",
+                                "下载 PDF 简历",
                                 visible=False,
                             )
-                        export_status = gr.Markdown()
+                        with gr.Column(
+                            visible=False,
+                            elem_classes="supplement-overlay",
+                        ) as supplement_panel, gr.Column(
+                            elem_classes="supplement-modal"
+                        ):
+                                gr.Markdown("### 补充履历")
+                                gr.Markdown(
+                                    "补充原简历未写明的项目、职责、成果或证书。只填写真实信息。",
+                                    elem_classes="section-intro",
+                                )
+                                supplemental_experience = gr.Textbox(
+                                    label="补充信息（可选）",
+                                    placeholder=(
+                                        "例如：2025 年负责订单系统缓存改造；个人承担方案设计和上线，"
+                                        "接口平均响应时间从 320ms 降至 180ms。"
+                                    ),
+                                    lines=7,
+                                    max_lines=14,
+                                    max_length=6000,
+                                )
+                                resume_photo = gr.File(
+                                    label="简历照片（可选，JPEG/PNG/WebP，最大 5MB）",
+                                    file_types=[".jpg", ".jpeg", ".png", ".webp"],
+                                    type="filepath",
+                                )
+                                with gr.Row():
+                                    cancel_supplement_button = gr.Button("取消")
+                                    confirm_generate_button = gr.Button(
+                                        "生成简历", variant="primary"
+                                    )
+                        generation_status = gr.Markdown()
 
                 with gr.Tab("🎯 模拟面试"), gr.Column(elem_classes="placeholder-panel"):
                     gr.Markdown("## 模拟面试")
@@ -510,8 +749,11 @@ def build_app() -> gr.Blocks:
                 optimized_resume,
                 resume_record_state,
                 resume_results,
+                supplemental_experience,
+                resume_photo,
+                supplement_panel,
                 download_resume_button,
-                export_status,
+                generation_status,
             ],
             api_name=False,
         )
@@ -540,15 +782,64 @@ def build_app() -> gr.Blocks:
                 resume_record_state,
                 quota_label,
                 resume_results,
+                supplemental_experience,
+                resume_photo,
+                supplement_panel,
                 download_resume_button,
-                export_status,
+                generation_status,
             ],
             api_name=False,
         )
         generate_resume_button.click(
+            open_supplement_callback,
+            inputs=resume_record_state,
+            outputs=[
+                supplement_panel,
+                supplemental_experience,
+                download_resume_button,
+                generation_status,
+            ],
+            api_name=False,
+        )
+        cancel_supplement_button.click(
+            cancel_supplement_callback,
+            outputs=[supplement_panel, supplemental_experience, generation_status],
+            api_name=False,
+        )
+
+        pending_outputs = [
+            cancel_supplement_button,
+            confirm_generate_button,
+            generation_status,
+            download_resume_button,
+        ]
+        generation_outputs = [
+            supplement_panel,
+            supplemental_experience,
+            download_resume_button,
+            generation_status,
+            optimized_resume,
+            cancel_supplement_button,
+            confirm_generate_button,
+        ]
+        confirm_generate_button.click(
+            begin_resume_generation,
+            outputs=pending_outputs,
+            queue=False,
+            api_name=False,
+        ).then(
             generate_resume_callback,
-            inputs=[token_state, resume_record_state, optimized_resume],
-            outputs=[download_resume_button, export_status],
+            inputs=[
+                token_state,
+                resume_record_state,
+                optimized_resume,
+                supplemental_experience,
+                resume_photo,
+            ],
+            outputs=generation_outputs,
+            trigger_mode="once",
+            concurrency_limit=1,
+            concurrency_id="resume-pdf-generation",
             api_name=False,
         )
 
@@ -556,4 +847,8 @@ def build_app() -> gr.Blocks:
 
 
 if __name__ == "__main__":
-    build_app().launch()
+    try:
+        build_app().launch()
+    except Exception as exc:
+        report_exception(logger, "frontend.launch", exc)
+        raise

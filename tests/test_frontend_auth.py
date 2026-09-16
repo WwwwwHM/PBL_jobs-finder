@@ -2,11 +2,21 @@
 
 import unittest
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 import frontend
 from pbl_jobs_finder.modules.quota import AuthenticationError, QuotaStatus
-from pbl_jobs_finder.modules.resume_diagnosis import DiagnosisOutcome, ResumeDiagnosis
+from pbl_jobs_finder.modules.resume_diagnosis import (
+    DiagnosisOutcome,
+    GeneratedResumeOutcome,
+    ResumeDiagnosis,
+)
+from pbl_jobs_finder.modules.resume_pdf import (
+    ResumeBasics,
+    ResumeDocument,
+    ResumePDFError,
+)
 
 
 class FrontendAuthTests(unittest.TestCase):
@@ -81,6 +91,7 @@ class FrontendAuthTests(unittest.TestCase):
             {
                 frontend.diagnose_resume_callback,
                 frontend.generate_resume_callback,
+                frontend.open_supplement_callback,
                 frontend.login,
                 frontend.restore_login,
                 frontend.logout,
@@ -119,18 +130,111 @@ class FrontendAuthTests(unittest.TestCase):
         self.assertEqual(result[4], outcome.diagnosis.optimized_text)
         self.assertEqual(result[5], 12)
         self.assertTrue(result[7]["visible"])
-        self.assertFalse(result[8]["visible"])
+        self.assertEqual(result[8], "")
+        self.assertIsNone(result[9]["value"])
+        self.assertFalse(result[10]["visible"])
+        self.assertFalse(result[11]["visible"])
 
-    def test_generate_callback_returns_downloadable_file(self) -> None:
-        destination = "data/exports/Python_优化简历_12.docx"
+    def test_generate_callback_returns_downloadable_pdf_and_closes_panel(self) -> None:
+        destination = Path("data/exports/Python_新版简历_12.pdf")
+        outcome = GeneratedResumeOutcome(
+            record_id=12,
+            document=ResumeDocument(
+                basics=ResumeBasics(name="张三", headline="Python 后端工程师")
+            ),
+            pdf_path=destination,
+        )
         with patch.object(
             frontend.resume_service,
-            "export_optimized_resume",
-            return_value=destination,
+            "generate_pdf_resume",
+            return_value=outcome,
         ):
-            result = frontend.generate_resume_callback("token", 12, "# 张三")
-        self.assertEqual(result[0]["value"], destination)
+            result = frontend.generate_resume_callback(
+                "token",
+                12,
+                "# 张三",
+                "补充订单系统缓存改造经历",
+            )
+        self.assertFalse(result[0]["visible"])
+        self.assertEqual(result[1], "")
+        self.assertEqual(result[2]["value"], str(destination))
+        self.assertTrue(result[2]["visible"])
+        self.assertIn("PDF", result[3])
+        self.assertIn("# 张三", result[4])
+
+    def test_generate_submits_supplement_and_photo_together(self) -> None:
+        outcome = GeneratedResumeOutcome(
+            record_id=12,
+            document=ResumeDocument(
+                basics=ResumeBasics(name="张三", headline="Python 后端工程师")
+            ),
+            pdf_path=Path("resume.pdf"),
+        )
+        with patch.object(
+            frontend.resume_service,
+            "generate_pdf_resume",
+            return_value=outcome,
+        ) as generate:
+            frontend.generate_resume_callback(
+                "token", 12, "# 张三", "补充缓存改造", "portrait.png"
+            )
+        self.assertEqual(
+            generate.call_args.kwargs["supplemental_experience"], "补充缓存改造"
+        )
+        self.assertEqual(generate.call_args.kwargs["photo_file"], "portrait.png")
+
+    def test_generate_failure_keeps_supplement_panel_and_input(self) -> None:
+        with (
+            patch.object(
+                frontend.resume_service,
+                "generate_pdf_resume",
+                side_effect=ResumePDFError("浏览器不可用"),
+            ),
+            patch.object(frontend, "report_exception", return_value="error123") as report,
+        ):
+            result = frontend.generate_resume_callback(
+                "token",
+                12,
+                "# 张三",
+                "需要保留的补充信息",
+            )
         self.assertTrue(result[0]["visible"])
+        self.assertNotIn("value", result[1])
+        self.assertFalse(result[2]["visible"])
+        self.assertIn("浏览器不可用", result[3])
+        self.assertIn("error123", result[3])
+        report.assert_called_once()
+
+    def test_unexpected_diagnosis_failure_returns_searchable_error_id(self) -> None:
+        with (
+            patch.object(
+                frontend.resume_service,
+                "diagnose",
+                side_effect=RuntimeError("database disconnected"),
+            ),
+            patch.object(frontend, "report_exception", return_value="error456") as report,
+            patch.object(frontend, "_quota_label", return_value=""),
+        ):
+            result = frontend.diagnose_resume_callback(
+                None,
+                "一份足够完整的测试简历内容",
+                "Python 后端工程师",
+                "token",
+            )
+
+        self.assertIn("系统异常", result[0])
+        self.assertIn("error456", result[0])
+        report.assert_called_once()
+
+    def test_supplement_panel_open_and_cancel_contracts(self) -> None:
+        opened = frontend.open_supplement_callback(12)
+        self.assertTrue(opened[0]["visible"])
+        self.assertEqual(opened[1], "")
+        self.assertFalse(opened[2]["visible"])
+
+        cancelled = frontend.cancel_supplement_callback()
+        self.assertFalse(cancelled[0]["visible"])
+        self.assertEqual(cancelled[1:], ("", ""))
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from pathlib import Path
 import pdfplumber
 from PyPDF2 import PdfReader
 
-MAX_PDF_SIZE = 10 * 1024 * 1024
+MAX_PDF_SIZE = 12 * 1024 * 1024
 MAX_RESUME_CHARACTERS = 60_000
 
 
@@ -25,7 +25,7 @@ def parse_resume_pdf(file_path: str | Path) -> str:
     if path.suffix.lower() != ".pdf":
         raise ResumeParseError("仅支持 PDF 格式的简历")
     if path.stat().st_size > MAX_PDF_SIZE:
-        raise ResumeParseError("PDF 文件不能超过 10 MB")
+        raise ResumeParseError("PDF 文件不能超过 12 MB")
 
     extraction_errors: list[Exception] = []
     completed_extraction = False

@@ -16,8 +16,12 @@ venv/
 gradio_cached_examples/
 data/*.db
 data/*.log
+data/logs/
 data/uploads/
 data/chroma_db/
+data/exports/
+.playwright-browsers/
+.uv-cache/
 
 # Editors and operating systems
 .idea/
