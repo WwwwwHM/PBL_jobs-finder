@@ -79,7 +79,7 @@ class ZhipuChatClient:
 def create_default_chat_client() -> ChatClient:
     settings = get_settings()
     if not settings.zhipu_api_key:
-        raise LLMConfigurationError("未配置 ZHIPU_API_KEY，暂时无法开始诊断")
+        raise LLMConfigurationError("未配置 ZHIPU_API_KEY，暂时无法使用 AI 功能")
     return ZhipuChatClient(
         api_key=settings.zhipu_api_key,
         model=settings.zhipu_model,

@@ -1,0 +1,296 @@
+[
+  {
+    "id": "q_java_backend_001",
+    "question": "请结合实际项目说明一次 Java 服务接口延迟升高的排查过程，你如何定位瓶颈并验证优化效果？",
+    "position": "Java后端开发工程师",
+    "difficulty": "medium",
+    "category": "性能排查"
+  },
+  {
+    "id": "q_java_backend_002",
+    "question": "Spring Boot 应用中 Bean 的生命周期是什么，循环依赖在什么情况下可以解决、什么情况下不能？",
+    "position": "Java后端开发工程师",
+    "difficulty": "medium",
+    "category": "Spring"
+  },
+  {
+    "id": "q_java_backend_003",
+    "question": "设计一个高并发订单接口时，你会如何处理幂等、库存一致性和重复消息？",
+    "position": "Java后端开发工程师",
+    "difficulty": "advanced",
+    "category": "分布式系统"
+  },
+  {
+    "id": "q_java_backend_004",
+    "question": "MySQL 联合索引的最左前缀原则如何影响查询，请举一个索引失效并完成优化的例子。",
+    "position": "Java后端开发工程师",
+    "difficulty": "medium",
+    "category": "数据库"
+  },
+  {
+    "id": "q_java_backend_005",
+    "question": "Redis 缓存穿透、击穿和雪崩分别是什么，你会针对不同场景采用哪些措施？",
+    "position": "Java后端开发工程师",
+    "difficulty": "medium",
+    "category": "缓存"
+  },
+  {
+    "id": "q_java_backend_006",
+    "question": "请解释 JVM 垃圾回收的基本过程，并说明如何分析一次频繁 Full GC 问题。",
+    "position": "Java后端开发工程师",
+    "difficulty": "advanced",
+    "category": "JVM"
+  },
+  {
+    "id": "q_java_backend_007",
+    "question": "微服务调用链中出现部分超时，你会如何设计超时、重试、熔断和降级策略？",
+    "position": "Java后端开发工程师",
+    "difficulty": "advanced",
+    "category": "微服务"
+  },
+  {
+    "id": "q_java_backend_008",
+    "question": "Java 中 synchronized、ReentrantLock 和无锁原子类各适合什么并发场景？",
+    "position": "Java后端开发工程师",
+    "difficulty": "medium",
+    "category": "并发编程"
+  },
+  {
+    "id": "q_python_backend_001",
+    "question": "请说明 Python Web 服务中同步、异步和多进程模型的差异，以及你会如何选择。",
+    "position": "Python后端开发工程师",
+    "difficulty": "medium",
+    "category": "并发模型"
+  },
+  {
+    "id": "q_python_backend_002",
+    "question": "FastAPI 的依赖注入和 Pydantic 校验如何协作，你会怎样组织一个可测试的接口？",
+    "position": "Python后端开发工程师",
+    "difficulty": "medium",
+    "category": "FastAPI"
+  },
+  {
+    "id": "q_python_backend_003",
+    "question": "SQLAlchemy Session 的事务边界应该如何管理，怎样避免连接泄漏和部分提交？",
+    "position": "Python后端开发工程师",
+    "difficulty": "medium",
+    "category": "数据库"
+  },
+  {
+    "id": "q_python_backend_004",
+    "question": "线上 Python 服务内存持续增长时，你会采集哪些证据并如何逐步定位？",
+    "position": "Python后端开发工程师",
+    "difficulty": "advanced",
+    "category": "性能排查"
+  },
+  {
+    "id": "q_frontend_001",
+    "question": "浏览器从输入 URL 到页面可交互经历了哪些关键阶段，性能指标可以在哪些阶段优化？",
+    "position": "前端开发工程师",
+    "difficulty": "medium",
+    "category": "浏览器原理"
+  },
+  {
+    "id": "q_frontend_002",
+    "question": "React 组件发生不必要渲染时，你会如何测量、定位并选择优化手段？",
+    "position": "前端开发工程师",
+    "difficulty": "medium",
+    "category": "React"
+  },
+  {
+    "id": "q_frontend_003",
+    "question": "请设计一个支持大数据量、筛选和虚拟滚动的表格组件，并说明状态边界。",
+    "position": "前端开发工程师",
+    "difficulty": "advanced",
+    "category": "组件设计"
+  },
+  {
+    "id": "q_frontend_004",
+    "question": "TypeScript 中泛型、联合类型和类型守卫如何用于构建安全的接口响应模型？",
+    "position": "前端开发工程师",
+    "difficulty": "medium",
+    "category": "TypeScript"
+  },
+  {
+    "id": "q_frontend_005",
+    "question": "前端应用出现白屏但无法稳定复现时，你会如何完善监控并缩小问题范围？",
+    "position": "前端开发工程师",
+    "difficulty": "advanced",
+    "category": "稳定性"
+  },
+  {
+    "id": "q_ai_engineer_001",
+    "question": "请解释 RAG 系统中召回、重排和生成三个阶段的职责，并说明如何分别评估。",
+    "position": "AI应用开发工程师",
+    "difficulty": "medium",
+    "category": "RAG"
+  },
+  {
+    "id": "q_ai_engineer_002",
+    "question": "Embedding 模型、分块策略和向量距离如何共同影响知识库召回质量？",
+    "position": "AI应用开发工程师",
+    "difficulty": "medium",
+    "category": "向量检索"
+  },
+  {
+    "id": "q_ai_engineer_003",
+    "question": "面对大模型结构化输出不稳定的问题，你会如何设计 Schema、重试和降级机制？",
+    "position": "AI应用开发工程师",
+    "difficulty": "medium",
+    "category": "工程化"
+  },
+  {
+    "id": "q_ai_engineer_004",
+    "question": "请设计一套评估提示词变更是否改善效果的离线实验，说明样本、指标和防偏差方法。",
+    "position": "AI应用开发工程师",
+    "difficulty": "advanced",
+    "category": "模型评估"
+  },
+  {
+    "id": "q_ai_engineer_005",
+    "question": "用户输入可能包含提示注入时，系统边界、工具权限和输出校验应如何配合？",
+    "position": "AI应用开发工程师",
+    "difficulty": "advanced",
+    "category": "AI安全"
+  },
+  {
+    "id": "q_algorithm_001",
+    "question": "类别极不平衡的分类任务应选择哪些评估指标，阈值又该如何确定？",
+    "position": "算法工程师",
+    "difficulty": "medium",
+    "category": "模型评估"
+  },
+  {
+    "id": "q_algorithm_002",
+    "question": "训练集表现很好但验证集明显下降时，你会如何判断并缓解过拟合？",
+    "position": "算法工程师",
+    "difficulty": "basic",
+    "category": "机器学习"
+  },
+  {
+    "id": "q_algorithm_003",
+    "question": "请说明 Transformer 自注意力的计算过程、复杂度和长序列场景中的限制。",
+    "position": "算法工程师",
+    "difficulty": "advanced",
+    "category": "深度学习"
+  },
+  {
+    "id": "q_algorithm_004",
+    "question": "模型上线后效果逐月下降，你会如何监控数据漂移并制定再训练策略？",
+    "position": "算法工程师",
+    "difficulty": "advanced",
+    "category": "MLOps"
+  },
+  {
+    "id": "q_data_analyst_001",
+    "question": "业务指标突然下跌时，你会如何拆解指标、验证数据质量并定位原因？",
+    "position": "数据分析师",
+    "difficulty": "medium",
+    "category": "业务分析"
+  },
+  {
+    "id": "q_data_analyst_002",
+    "question": "设计 A/B 测试时，如何确定核心指标、样本量、实验周期和显著性标准？",
+    "position": "数据分析师",
+    "difficulty": "medium",
+    "category": "实验设计"
+  },
+  {
+    "id": "q_data_analyst_003",
+    "question": "请用 SQL 思路说明如何计算用户次日、七日和三十日留存率。",
+    "position": "数据分析师",
+    "difficulty": "medium",
+    "category": "SQL"
+  },
+  {
+    "id": "q_data_analyst_004",
+    "question": "相关性很强但不能证明因果时，你会使用哪些方法进一步验证业务判断？",
+    "position": "数据分析师",
+    "difficulty": "advanced",
+    "category": "统计推断"
+  },
+  {
+    "id": "q_product_001",
+    "question": "请挑选一个你负责过的产品需求，说明如何识别真实问题并确定成功指标。",
+    "position": "产品经理",
+    "difficulty": "medium",
+    "category": "需求分析"
+  },
+  {
+    "id": "q_product_002",
+    "question": "研发资源不足而多个业务方都要求优先时，你如何建立优先级并推动共识？",
+    "position": "产品经理",
+    "difficulty": "medium",
+    "category": "项目推进"
+  },
+  {
+    "id": "q_product_003",
+    "question": "新功能上线后使用率低于预期，你会查看哪些数据并如何安排下一步验证？",
+    "position": "产品经理",
+    "difficulty": "medium",
+    "category": "数据驱动"
+  },
+  {
+    "id": "q_product_004",
+    "question": "请为 AI 求职助手设计最小可行版本，并说明哪些需求应明确排除。",
+    "position": "产品经理",
+    "difficulty": "advanced",
+    "category": "产品设计"
+  },
+  {
+    "id": "q_test_001",
+    "question": "面对只有一句描述的新需求，你会如何补全验收条件并设计测试范围？",
+    "position": "测试开发工程师",
+    "difficulty": "basic",
+    "category": "测试设计"
+  },
+  {
+    "id": "q_test_002",
+    "question": "接口自动化测试中如何管理测试数据、环境依赖和不稳定用例？",
+    "position": "测试开发工程师",
+    "difficulty": "medium",
+    "category": "自动化测试"
+  },
+  {
+    "id": "q_test_003",
+    "question": "高并发系统上线前，你会如何设计容量测试并解释关键性能指标？",
+    "position": "测试开发工程师",
+    "difficulty": "advanced",
+    "category": "性能测试"
+  },
+  {
+    "id": "q_test_004",
+    "question": "线上出现偶发数据错误但日志不足时，你会如何复现并补强可观测性？",
+    "position": "测试开发工程师",
+    "difficulty": "advanced",
+    "category": "故障定位"
+  },
+  {
+    "id": "q_general_001",
+    "question": "请介绍一个最能代表你能力的项目，重点说明你的职责、关键决策和可验证结果。",
+    "position": "通用技术岗位",
+    "difficulty": "basic",
+    "category": "项目经历"
+  },
+  {
+    "id": "q_general_002",
+    "question": "请讲述一次你与团队成员意见不一致的经历，你如何推动问题得到解决？",
+    "position": "通用技术岗位",
+    "difficulty": "medium",
+    "category": "协作沟通"
+  },
+  {
+    "id": "q_general_003",
+    "question": "面对时间紧、信息不完整的任务，你如何评估风险并保证关键结果交付？",
+    "position": "通用技术岗位",
+    "difficulty": "medium",
+    "category": "执行力"
+  },
+  {
+    "id": "q_general_004",
+    "question": "请举例说明一次失败或错误经历，以及你据此改变了什么工作方法。",
+    "position": "通用技术岗位",
+    "difficulty": "medium",
+    "category": "复盘成长"
+  }
+]

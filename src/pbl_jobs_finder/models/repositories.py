@@ -144,6 +144,12 @@ def update_interview_session(
     return interview
 
 
+def get_interview_session(
+    session: Session, interview_id: int
+) -> InterviewSession | None:
+    return session.get(InterviewSession, interview_id)
+
+
 def get_recent_interview_sessions(
     session: Session, phone: str, limit: int = 5
 ) -> list[InterviewSession]:

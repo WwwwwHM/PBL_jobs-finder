@@ -57,6 +57,10 @@ class Settings:
     zhipu_max_retries: int
     aliyun_api_key: str | None
     aliyun_embedding_model: str
+    aliyun_embedding_url: str
+    embedding_dimensions: int
+    embedding_timeout_seconds: float
+    embedding_max_retries: int
 
     def ensure_runtime_directories(self) -> None:
         """Create directories used for local persistent data."""
@@ -108,4 +112,13 @@ def get_settings() -> Settings:
         aliyun_embedding_model=os.getenv(
             "ALIYUN_EMBEDDING_MODEL", "qwen3.7-text-embedding"
         ),
+        aliyun_embedding_url=os.getenv(
+            "ALIYUN_EMBEDDING_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+        ).strip(),
+        embedding_dimensions=_positive_int("EMBEDDING_DIMENSIONS", 1024),
+        embedding_timeout_seconds=_positive_float(
+            "EMBEDDING_TIMEOUT_SECONDS", 30.0
+        ),
+        embedding_max_retries=_positive_int("EMBEDDING_MAX_RETRIES", 2),
     )

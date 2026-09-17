@@ -6,6 +6,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import frontend
+from pbl_jobs_finder.modules.interview_agent import (
+    InterviewAnswerOutcome,
+    InterviewStartOutcome,
+    InterviewValidationError,
+)
 from pbl_jobs_finder.modules.quota import AuthenticationError, QuotaStatus
 from pbl_jobs_finder.modules.resume_diagnosis import (
     DiagnosisOutcome,
@@ -91,6 +96,9 @@ class FrontendAuthTests(unittest.TestCase):
             {
                 frontend.diagnose_resume_callback,
                 frontend.generate_resume_callback,
+                frontend.start_interview_callback,
+                frontend.submit_interview_answer_callback,
+                frontend.use_optimized_resume_callback,
                 frontend.open_supplement_callback,
                 frontend.login,
                 frontend.restore_login,
@@ -98,6 +106,122 @@ class FrontendAuthTests(unittest.TestCase):
             }
             <= callbacks
         )
+
+    def test_interview_callback_displays_first_question_and_updates_quota(self) -> None:
+        outcome = InterviewStartOutcome(
+            session_id=23,
+            question="请结合订单系统说明你如何定位接口延迟问题？",
+        )
+        with (
+            patch.object(frontend.interview_service, "start", return_value=outcome) as start,
+            patch.object(
+                frontend.quota_service,
+                "status",
+                return_value=QuotaStatus(10, 3, date(2026, 9, 17)),
+            ),
+        ):
+            result = frontend.start_interview_callback(
+                "Java 后端开发工程师",
+                "负责 Spring Boot 微服务",
+                "负责订单系统开发",
+                "token",
+            )
+
+        start.assert_called_once_with(
+            token="token",
+            position="Java 后端开发工程师",
+            job_description="负责 Spring Boot 微服务",
+            resume_text="负责订单系统开发",
+        )
+        self.assertEqual(result[1], 23)
+        self.assertEqual(result[2], "第 1 题 / 共 5 题")
+        self.assertIn(outcome.question, result[3])
+        self.assertTrue(result[4]["visible"])
+        self.assertEqual(result[5], "今日剩余 7 / 10 次")
+        self.assertTrue(result[6]["interactive"])
+        self.assertEqual(result[7]["value"], "")
+        self.assertTrue(result[7]["interactive"])
+        self.assertTrue(result[8]["interactive"])
+        self.assertEqual(result[9], "")
+        self.assertEqual(result[10], outcome.question)
+
+    def test_interview_failure_preserves_workspace_and_reenables_start(self) -> None:
+        with (
+            patch.object(
+                frontend.interview_service,
+                "start",
+                side_effect=InterviewValidationError("请输入目标岗位"),
+            ),
+            patch.object(frontend, "_quota_label", return_value="今日剩余 10 / 10 次"),
+        ):
+            result = frontend.start_interview_callback("", "JD", "简历", "token")
+
+        self.assertIn("请输入目标岗位", result[0])
+        for unchanged in result[1:5]:
+            self.assertEqual(unchanged, {"__type__": "update"})
+        self.assertEqual(result[5], "今日剩余 10 / 10 次")
+        self.assertTrue(result[6]["interactive"])
+
+    def test_clear_interview_workspace_removes_inputs_and_session(self) -> None:
+        result = frontend.clear_interview_workspace()
+        self.assertEqual(result[:4], ("", "", "", ""))
+        self.assertIsNone(result[4])
+        self.assertEqual(result[5:7], ("", ""))
+        self.assertFalse(result[7]["visible"])
+        self.assertTrue(result[8]["interactive"])
+        self.assertEqual(result[9]["value"], "")
+        self.assertEqual(result[10], "")
+        self.assertTrue(result[11]["interactive"])
+
+    def test_current_optimized_resume_can_fill_interview_context(self) -> None:
+        result = frontend.use_optimized_resume_callback(
+            "# 张三\n\n## 项目经历\n- 订单系统",
+            "Java 后端工程师",
+            "",
+        )
+        self.assertIn("订单系统", result[0])
+        self.assertEqual(result[1], "Java 后端工程师")
+        self.assertIn("已导入", result[2])
+
+        missing = frontend.use_optimized_resume_callback("", "Java 后端工程师", "")
+        self.assertEqual(missing[0], {"__type__": "update"})
+        self.assertIn("先在简历诊断", missing[2])
+
+    def test_submit_answer_callback_displays_feedback_and_next_question(self) -> None:
+        outcome = InterviewAnswerOutcome(
+            session_id=23,
+            question_round=2,
+            answer="使用监控和链路追踪定位瓶颈",
+            feedback="回答覆盖了定位思路，建议补充指标阈值和验证顺序。",
+            next_question="请说明如何保证消息消费幂等性？",
+            follow_up_count=0,
+            is_follow_up=False,
+            is_finished=False,
+        )
+        with patch.object(
+            frontend.interview_service,
+            "submit_answer",
+            return_value=outcome,
+        ) as submit:
+            result = frontend.submit_interview_answer_callback(
+                outcome.answer,
+                23,
+                "token",
+                "如何定位接口延迟？",
+            )
+
+        submit.assert_called_once_with(
+            token="token",
+            session_id=23,
+            answer=outcome.answer,
+            expected_question="如何定位接口延迟？",
+        )
+        self.assertIn("AI 反馈", result[0])
+        self.assertIn("第 2 题", result[3])
+        self.assertIn("消息消费幂等", result[4])
+        self.assertEqual(result[5], outcome.next_question)
+        self.assertTrue(result[1]["interactive"])
+        self.assertTrue(result[2]["interactive"])
 
     def test_diagnosis_callback_exposes_editable_complete_resume(self) -> None:
         outcome = DiagnosisOutcome(

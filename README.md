@@ -9,7 +9,7 @@
 - 验证码、Token 鉴权、LocalStorage 登录态恢复和退出清理已接入。
 - 简历诊断已接入 PDF/文本输入、GLM 结构化诊断、补充履历窗口，以及 JSON → HTML → Playwright 的新版 PDF 简历生成。
 - 每日共享配额服务已接入简历诊断，支持每日 00:00 重置、并发限制和失败回滚；同一诊断生成 PDF、失败重试和下载不重复扣除配额。
-- 模拟面试和历史记录尚未接入。
+- 模拟面试多轮问答已接通：内置 42 条结构化种子题，支持阿里云 1024 维 Embedding、ChromaDB top 5 检索、GLM 定制首题、独立会话落库、当前优化简历直接导入、逐题 AI 反馈、动态追问和 5 道主问题流程；面试报告与历史记录尚未接入。
 
 ## 环境准备
 
@@ -50,6 +50,12 @@ ZHIPU_API_KEY=你的智谱APIKey
 ZHIPU_MODEL=glm-4-flash
 ZHIPU_TIMEOUT_SECONDS=30
 ZHIPU_MAX_RETRIES=2
+ALIYUN_API_KEY=你的阿里云APIKey
+ALIYUN_EMBEDDING_MODEL=qwen3.7-text-embedding
+ALIYUN_EMBEDDING_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings
+EMBEDDING_DIMENSIONS=1024
+EMBEDDING_TIMEOUT_SECONDS=30
+EMBEDDING_MAX_RETRIES=2
 ```
 
 简历诊断支持 12 MB 以内的 PDF，并依次使用 PyPDF2 和 pdfplumber 提取文本；扫描件或图片型 PDF 会自动使用本地 RapidOCR 识别，图片不会发送给第三方 OCR 服务，图片型 PDF 最多支持 5 页。首次 OCR 需要加载本地模型，耗时会高于普通文本 PDF；无法识别时仍可直接粘贴简历内容。诊断结果包含岗位匹配度、缺失关键词、修改建议和 STAR 改写示例。诊断完成后，用户可以在生成新版简历前补充最多 6000 字的真实履历；模型会拆分并润色补充事实，将其归入技能、工作、项目、教育或证书等对应栏目，不会在简历末尾机械追加“补充信息”。模型只输出经过 Pydantic Schema 校验的 JSON，服务端使用固定 HTML/CSS 模板并通过 Playwright/Chromium 打印 A4 PDF。模型被明确要求不得新增经历或伪造数据，缺少量化信息时会保留待补充占位符。PDF 解析、OCR、模型调用、Schema 校验、浏览器渲染或保存失败时都会保留可重试输入，不会保存不完整记录。
@@ -71,6 +77,18 @@ data/
 ```
 
 数据库初始化可重复执行，不会删除已有数据。
+
+## 初始化面试题向量库
+
+配置 `ALIYUN_API_KEY` 后执行：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\import_question_bank.py
+```
+
+命令会严格校验 `src/pbl_jobs_finder/resources/interview_questions.json`，按每批最多 20 条调用 Embedding，并使用稳定题目 ID 写入 `data/chroma_db/`。重复执行会更新同 ID 题目，不会增加重复记录。也可通过 `--source` 和 `--persist-directory` 指定其他结构化题库与持久化目录。
+
+题库初始化后，登录用户可在“模拟面试”页填写目标岗位，并可选粘贴岗位 JD 与简历核心内容；也可以点击“使用当前优化稿”，直接复用简历诊断结果或生成新版 PDF 后回填的新版简历。开始面试会占用一次共享配额：系统使用三类输入检索 top 5 参考题，由 GLM 生成第一道问题，并将 `in_progress` 会话、第一题和对话状态保存到 SQLite。首题下方可填写并提交回答，回答写入当前用户的会话且不重复扣配额。输入校验、Embedding、模型或数据库失败时，本次配额自动回滚且不会保存半成品会话。
 
 ## 启动前端
 

@@ -12,6 +12,12 @@ from pbl_jobs_finder.modules.auth import (
     verify_login,
     verify_token,
 )
+from pbl_jobs_finder.modules.interview_agent import (
+    InterviewAccessError,
+    InterviewService,
+    InterviewUnavailableError,
+    InterviewValidationError,
+)
 from pbl_jobs_finder.modules.quota import (
     AuthenticationError,
     QuotaExceededError,
@@ -26,6 +32,10 @@ from pbl_jobs_finder.modules.resume_diagnosis import (
     ResumeValidationError,
 )
 from pbl_jobs_finder.modules.resume_pdf import document_to_markdown
+from pbl_jobs_finder.utils.embeddings import (
+    EmbeddingConfigurationError,
+    EmbeddingServiceError,
+)
 from pbl_jobs_finder.utils.llm_client import LLMConfigurationError, LLMServiceError
 from pbl_jobs_finder.utils.logging import configure_logging, report_exception
 
@@ -44,6 +54,7 @@ WRITE_TOKEN_JS = f"""(token) => {{
     return token;
 }}"""
 resume_service = ResumeDiagnosisService()
+interview_service = InterviewService()
 
 
 def request_code(phone: str) -> str:
@@ -310,6 +321,209 @@ def generate_resume_callback(
     )
 
 
+def begin_interview_start() -> tuple:
+    """Disable duplicate starts while retrieval and generation are running."""
+
+    return gr.update(interactive=False), "正在检索题库并生成第一道问题..."
+
+
+def use_optimized_resume_callback(
+    optimized_text: str,
+    diagnosed_position: str,
+    interview_position: str,
+) -> tuple:
+    """Copy the current diagnosis or generated resume into interview context."""
+
+    resume = (optimized_text or "").strip()
+    if not resume:
+        return (
+            gr.update(),
+            gr.update(),
+            "**未导入简历：** 请先在简历诊断中生成优化稿。",
+        )
+    position = (interview_position or "").strip() or (
+        diagnosed_position or ""
+    ).strip()
+    return resume, position, "已导入当前优化稿。"
+
+
+def start_interview_callback(
+    position: str,
+    job_description: str,
+    resume_text: str,
+    token: str,
+) -> tuple:
+    """Create an interview session and display its first question."""
+
+    try:
+        outcome = interview_service.start(
+            token=token,
+            position=position,
+            job_description=job_description,
+            resume_text=resume_text,
+        )
+        remaining = quota_service.status(token).remaining
+    except (
+        AuthenticationError,
+        EmbeddingConfigurationError,
+        EmbeddingServiceError,
+        InterviewUnavailableError,
+        InterviewValidationError,
+        LLMConfigurationError,
+        LLMServiceError,
+        QuotaExceededError,
+        ValueError,
+    ) as exc:
+        reference = _callback_error_reference(
+            "interview.start",
+            exc,
+            position_chars=len(position or ""),
+            job_description_chars=len(job_description or ""),
+            resume_text_chars=len(resume_text or ""),
+        )
+        return (
+            f"**面试未开始：** {exc}{reference}",
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            _quota_label(token),
+            gr.update(interactive=True),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+    except Exception as exc:  # noqa: BLE001 - keep unexpected failures debuggable
+        error_id = report_exception(
+            logger,
+            "interview.start",
+            exc,
+            position_chars=len(position or ""),
+            job_description_chars=len(job_description or ""),
+            resume_text_chars=len(resume_text or ""),
+        )
+        return (
+            f"**面试未开始：** 系统异常，请稍后重试（错误编号：{error_id}）",
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            _quota_label(token),
+            gr.update(interactive=True),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+
+    return (
+        "面试已开始。",
+        outcome.session_id,
+        f"第 {outcome.question_round} 题 / 共 {outcome.total_questions} 题",
+        f"### 面试官提问\n\n{outcome.question}",
+        gr.update(visible=True),
+        f"今日剩余 {remaining} / {quota_service.limit} 次",
+        gr.update(interactive=True),
+        gr.update(value="", interactive=True),
+        gr.update(interactive=True),
+        "",
+        outcome.question,
+    )
+
+
+def begin_answer_submission() -> tuple:
+    """Prevent duplicates while AI evaluates the answer and advances state."""
+
+    return gr.update(interactive=False), "正在评价回答并生成后续问题..."
+
+
+def submit_interview_answer_callback(
+    answer: str,
+    session_id: int | str | None,
+    token: str,
+    expected_question: str,
+) -> tuple:
+    """Evaluate an answer and display feedback plus the following question."""
+
+    try:
+        outcome = interview_service.submit_answer(
+            token=token,
+            session_id=session_id,
+            answer=answer,
+            expected_question=expected_question,
+        )
+    except (
+        AuthenticationError,
+        InterviewAccessError,
+        InterviewUnavailableError,
+        InterviewValidationError,
+    ) as exc:
+        reference = _callback_error_reference(
+            "interview.submit_answer",
+            exc,
+            answer_chars=len(answer or ""),
+            session_id=session_id if isinstance(session_id, int) else "invalid",
+        )
+        return (
+            f"**回答未保存：** {exc}{reference}",
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+    except Exception as exc:  # noqa: BLE001 - keep unexpected failures debuggable
+        error_id = report_exception(
+            logger,
+            "interview.submit_answer",
+            exc,
+            answer_chars=len(answer or ""),
+            session_id=session_id if isinstance(session_id, int) else "invalid",
+        )
+        return (
+            f"**回答未保存：** 系统异常，请稍后重试（错误编号：{error_id}）",
+            gr.update(interactive=True),
+            gr.update(interactive=True),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+    feedback = f"### AI 反馈\n\n{outcome.feedback}"
+    if outcome.is_finished:
+        return (
+            f"{feedback}\n\n本轮 5 道主问题已完成。",
+            gr.update(value="", interactive=False),
+            gr.update(interactive=False),
+            "已完成 5 题",
+            "### 本轮面试已完成",
+            "",
+            "面试已完成。完整报告将在报告功能中生成。",
+        )
+    if outcome.is_follow_up:
+        progress = (
+            f"第 {outcome.question_round} 题 / 共 5 题 · "
+            f"追问 {outcome.follow_up_count} / 3"
+        )
+        question = f"### 面试官追问\n\n{outcome.next_question}"
+        status = "请继续回答本题追问。"
+    else:
+        progress = f"第 {outcome.question_round} 题 / 共 5 题"
+        question = f"### 面试官提问\n\n{outcome.next_question}"
+        status = f"已进入第 {outcome.question_round} 题。"
+    return (
+        feedback,
+        gr.update(value="", interactive=True),
+        gr.update(interactive=True),
+        progress,
+        question,
+        outcome.next_question,
+        status,
+    )
+
+
 def _quota_label(token: str) -> str:
     try:
         status = quota_service.status(token)
@@ -328,7 +542,13 @@ def _callback_error_reference(
 ) -> str:
     if isinstance(
         error,
-        (AuthenticationError, QuotaExceededError, ResumeValidationError),
+        (
+            AuthenticationError,
+            InterviewAccessError,
+            InterviewValidationError,
+            QuotaExceededError,
+            ResumeValidationError,
+        ),
     ):
         logger.warning(
             "Operation rejected operation=%s exception=%s",
@@ -389,6 +609,26 @@ def clear_resume_workspace() -> tuple:
         gr.update(value=None),
         gr.update(visible=False),
         gr.update(value=None, visible=False),
+        "",
+    )
+
+
+def clear_interview_workspace() -> tuple:
+    """Remove prior-user interview data from a reused browser session."""
+
+    return (
+        "",
+        "",
+        "",
+        "",
+        None,
+        "",
+        "",
+        gr.update(visible=False),
+        gr.update(interactive=True),
+        gr.update(value="", interactive=True),
+        "",
+        gr.update(interactive=True),
         "",
     )
 
@@ -494,6 +734,16 @@ def build_app() -> gr.Blocks:
         padding-top: 18px;
     }
 
+    .interview-question {
+        border-left: 4px solid var(--brand);
+        padding: 4px 0 4px 16px;
+    }
+
+    .interview-question h3 {
+        font-size: 15px;
+        margin: 0 0 8px;
+    }
+
     .supplement-overlay {
         background: rgba(23, 32, 51, 0.54);
         inset: 0;
@@ -558,6 +808,8 @@ def build_app() -> gr.Blocks:
     ) as app:
         token_state = gr.State("")
         resume_record_state = gr.State(None)
+        interview_session_state = gr.State(None)
+        interview_question_state = gr.State("")
         browser_token = gr.Textbox(visible=False)
         with gr.Column(elem_id="login_view", elem_classes="auth-shell") as login_view:
             gr.Markdown("AI JOB ASSISTANT", elem_classes="brand-mark")
@@ -695,7 +947,56 @@ def build_app() -> gr.Blocks:
                         "围绕目标岗位进行多轮问答，获得针对性的回答反馈。",
                         elem_classes="section-intro",
                     )
-                    gr.Markdown("模拟面试功能将在业务模块接入后启用。")
+                    interview_position = gr.Textbox(
+                        label="目标岗位",
+                        placeholder="例如：Java 后端开发工程师",
+                        max_lines=1,
+                        max_length=100,
+                    )
+                    with gr.Row():
+                        interview_jd = gr.Textbox(
+                            label="岗位 JD（可选）",
+                            placeholder="粘贴岗位职责和任职要求",
+                            lines=7,
+                            max_lines=14,
+                            max_length=6000,
+                        )
+                        with gr.Column():
+                            interview_resume = gr.Textbox(
+                                label="简历核心内容（可选）",
+                                placeholder="粘贴与目标岗位相关的项目、职责和技能",
+                                lines=7,
+                                max_lines=14,
+                                max_length=6000,
+                            )
+                            use_current_resume_button = gr.Button(
+                                "使用当前优化稿",
+                                size="sm",
+                            )
+                    start_interview_button = gr.Button(
+                        "开始面试", variant="primary", elem_classes="primary-button"
+                    )
+                    interview_status = gr.Markdown()
+                    with gr.Column(
+                        visible=False,
+                        elem_classes="result-section",
+                    ) as interview_results:
+                        interview_progress = gr.Markdown()
+                        interview_question = gr.Markdown(
+                            elem_classes="interview-question"
+                        )
+                        interview_answer = gr.Textbox(
+                            label="你的回答",
+                            placeholder="结合具体情境、行动和结果作答",
+                            lines=7,
+                            max_lines=14,
+                            max_length=6000,
+                        )
+                        submit_answer_button = gr.Button(
+                            "提交回答",
+                            variant="primary",
+                        )
+                        interview_feedback = gr.Markdown()
 
                 with gr.Tab("📊 我的记录"), gr.Column(elem_classes="placeholder-panel"):
                     gr.Markdown("## 我的记录")
@@ -754,6 +1055,24 @@ def build_app() -> gr.Blocks:
                 supplement_panel,
                 download_resume_button,
                 generation_status,
+            ],
+            api_name=False,
+        ).then(
+            clear_interview_workspace,
+            outputs=[
+                interview_position,
+                interview_jd,
+                interview_resume,
+                interview_status,
+                interview_session_state,
+                interview_progress,
+                interview_question,
+                interview_results,
+                start_interview_button,
+                interview_answer,
+                interview_feedback,
+                submit_answer_button,
+                interview_question_state,
             ],
             api_name=False,
         )
@@ -840,6 +1159,70 @@ def build_app() -> gr.Blocks:
             trigger_mode="once",
             concurrency_limit=1,
             concurrency_id="resume-pdf-generation",
+            api_name=False,
+        )
+        use_current_resume_button.click(
+            use_optimized_resume_callback,
+            inputs=[optimized_resume, target_position, interview_position],
+            outputs=[interview_resume, interview_position, interview_status],
+            api_name=False,
+        )
+        start_interview_button.click(
+            begin_interview_start,
+            outputs=[start_interview_button, interview_status],
+            queue=False,
+            api_name=False,
+        ).then(
+            start_interview_callback,
+            inputs=[
+                interview_position,
+                interview_jd,
+                interview_resume,
+                token_state,
+            ],
+            outputs=[
+                interview_status,
+                interview_session_state,
+                interview_progress,
+                interview_question,
+                interview_results,
+                quota_label,
+                start_interview_button,
+                interview_answer,
+                submit_answer_button,
+                interview_feedback,
+                interview_question_state,
+            ],
+            trigger_mode="once",
+            concurrency_limit=1,
+            concurrency_id="interview-start",
+            api_name=False,
+        )
+        submit_answer_button.click(
+            begin_answer_submission,
+            outputs=[submit_answer_button, interview_feedback],
+            queue=False,
+            api_name=False,
+        ).then(
+            submit_interview_answer_callback,
+            inputs=[
+                interview_answer,
+                interview_session_state,
+                token_state,
+                interview_question_state,
+            ],
+            outputs=[
+                interview_feedback,
+                interview_answer,
+                submit_answer_button,
+                interview_progress,
+                interview_question,
+                interview_question_state,
+                interview_status,
+            ],
+            trigger_mode="once",
+            concurrency_limit=1,
+            concurrency_id="interview-answer",
             api_name=False,
         )
 

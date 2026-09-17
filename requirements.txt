@@ -8,6 +8,7 @@ pydantic==2.6.0         # 数据验证
 # ===== 数据库 =====
 sqlalchemy==2.0.25      # ORM
 chromadb==0.5.0         # 向量数据库
+posthog>=2.4,<6          # 与 ChromaDB 0.5 的遥测调用签名兼容
 
 # ===== PDF处理 =====
 PyPDF2==3.0.1           # 基础PDF解析

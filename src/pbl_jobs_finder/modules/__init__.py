@@ -7,6 +7,15 @@ from pbl_jobs_finder.modules.auth import (
     verify_login,
     verify_token,
 )
+from pbl_jobs_finder.modules.interview_agent import (
+    InterviewAccessError,
+    InterviewAnswerOutcome,
+    InterviewService,
+    InterviewStartOutcome,
+    InterviewUnavailableError,
+    InterviewValidationError,
+    generate_first_question,
+)
 from pbl_jobs_finder.modules.quota import (
     AuthenticationError,
     QuotaExceededError,
@@ -39,6 +48,12 @@ __all__ = [
     "AuthenticationError",
     "DiagnosisOutcome",
     "GeneratedResumeOutcome",
+    "InterviewAccessError",
+    "InterviewAnswerOutcome",
+    "InterviewService",
+    "InterviewStartOutcome",
+    "InterviewUnavailableError",
+    "InterviewValidationError",
     "QuotaExceededError",
     "QuotaService",
     "QuotaStatus",
@@ -50,6 +65,7 @@ __all__ = [
     "create_resume_pdf",
     "diagnose_resume",
     "extract_text_from_image_pdf",
+    "generate_first_question",
     "generate_resume_with_supplement",
     "optimize_resume",
     "quota_service",
