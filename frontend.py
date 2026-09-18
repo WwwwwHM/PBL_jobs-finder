@@ -28,6 +28,7 @@ from pbl_jobs_finder.modules.auth import (
     verify_login,
     verify_token,
 )
+from pbl_jobs_finder.modules.history import history_service
 from pbl_jobs_finder.modules.interview_agent import InterviewReport, InterviewService
 from pbl_jobs_finder.modules.quota import quota_service
 from pbl_jobs_finder.modules.resume_diagnosis import ResumeDiagnosisService
@@ -50,6 +51,9 @@ WRITE_TOKEN_JS = f"""(token) => {{
 }}"""
 resume_service = ResumeDiagnosisService()
 interview_service = InterviewService()
+
+RESUME_HISTORY_HEADERS = ["时间", "目标岗位", "匹配度"]
+INTERVIEW_HISTORY_HEADERS = ["时间", "目标岗位", "问答轮数", "状态"]
 
 
 def request_code(phone: str) -> str:
@@ -127,6 +131,54 @@ def logout(token: str) -> tuple:
         error_id = report_exception(logger, "auth.logout", exc)
         message = f"本地登录状态已清除（错误编号：{error_id}）"
     return (*_logged_out(message), "", "")
+
+
+def load_history_callback(token: str) -> tuple[list[list[str]], list[list[str]], str]:
+    """Load recent record summaries without exposing stored source content."""
+
+    if not (token or "").strip():
+        return [], [], ""
+    try:
+        snapshot = history_service.get_recent(token)
+    except AuthenticationError as exc:
+        logger.warning("History rejected exception=%s", type(exc).__name__)
+        return [], [], f"**记录加载失败：** {exc}"
+    except Exception as exc:  # noqa: BLE001 - keep unexpected failures debuggable
+        error_id = report_exception(logger, "history.load", exc)
+        return [], [], f"**记录加载失败：** 请稍后重试（错误编号：{error_id}）"
+
+    status_labels = {
+        "created": "待开始",
+        "in_progress": "进行中",
+        "completed": "已完成",
+    }
+    resume_rows = [
+        [item.created_at, item.target_position, f"{item.score} / 100"]
+        for item in snapshot.resumes
+    ]
+    interview_rows = [
+        [
+            item.created_at,
+            item.position,
+            f"{item.question_rounds} 轮",
+            status_labels.get(item.status, "状态异常"),
+        ]
+        for item in snapshot.interviews
+    ]
+    if not resume_rows and not interview_rows:
+        message = "暂无历史记录。完成一次简历诊断或开始一轮模拟面试后会显示在这里。"
+    else:
+        message = (
+            f"已加载最近记录：简历诊断 {len(resume_rows)} 条，"
+            f"模拟面试 {len(interview_rows)} 条。"
+        )
+    return resume_rows, interview_rows, message
+
+
+def clear_history_workspace() -> tuple[list[object], list[object], str]:
+    """Clear history rows when authentication is removed."""
+
+    return [], [], ""
 
 
 def diagnose_resume_callback(
@@ -1054,10 +1106,35 @@ def build_app() -> gr.Blocks:
                 with gr.Tab("📊 我的记录"), gr.Column(elem_classes="placeholder-panel"):
                     gr.Markdown("## 我的记录")
                     gr.Markdown(
-                        "查看历史简历诊断、模拟面试和能力分析结果。",
+                        "查看最近 5 条简历诊断和模拟面试记录。",
                         elem_classes="section-intro",
                     )
-                    gr.Markdown("历史记录功能将在数据模块接入后启用。")
+                    refresh_history_button = gr.Button("刷新记录", size="sm")
+                    history_status = gr.Markdown()
+                    gr.Markdown("### 简历诊断")
+                    resume_history = gr.Dataframe(
+                        headers=RESUME_HISTORY_HEADERS,
+                        value=[],
+                        datatype=["str", "str", "str"],
+                        type="array",
+                        interactive=False,
+                        wrap=False,
+                        column_widths=[150, 180, 100],
+                        height=260,
+                        elem_classes="history-table",
+                    )
+                    gr.Markdown("### 模拟面试")
+                    interview_history = gr.Dataframe(
+                        headers=INTERVIEW_HISTORY_HEADERS,
+                        value=[],
+                        datatype=["str", "str", "str", "str"],
+                        type="array",
+                        interactive=False,
+                        wrap=False,
+                        column_widths=[150, 180, 110, 100],
+                        height=260,
+                        elem_classes="history-table",
+                    )
 
         send_code.click(request_code, inputs=phone, outputs=auth_status)
         auth_outputs = [
@@ -1069,6 +1146,7 @@ def build_app() -> gr.Blocks:
             token_state,
             browser_token,
         ]
+        history_outputs = [resume_history, interview_history, history_status]
         login_button.click(
             login,
             inputs=[phone, code],
@@ -1079,6 +1157,11 @@ def build_app() -> gr.Blocks:
             inputs=browser_token,
             outputs=browser_token,
             js=WRITE_TOKEN_JS,
+        ).then(
+            load_history_callback,
+            inputs=token_state,
+            outputs=history_outputs,
+            api_name=False,
         )
         logout_button.click(
             logout,
@@ -1128,6 +1211,10 @@ def build_app() -> gr.Blocks:
                 interview_question_state,
             ],
             api_name=False,
+        ).then(
+            clear_history_workspace,
+            outputs=history_outputs,
+            api_name=False,
         )
         app.load(
             restore_login,
@@ -1140,6 +1227,11 @@ def build_app() -> gr.Blocks:
             inputs=browser_token,
             outputs=browser_token,
             js=WRITE_TOKEN_JS,
+        ).then(
+            load_history_callback,
+            inputs=token_state,
+            outputs=history_outputs,
+            api_name=False,
         )
 
         diagnose_button.click(
@@ -1160,6 +1252,11 @@ def build_app() -> gr.Blocks:
                 download_resume_button,
                 generation_status,
             ],
+            api_name=False,
+        ).then(
+            load_history_callback,
+            inputs=token_state,
+            outputs=history_outputs,
             api_name=False,
         )
         generate_resume_button.click(
@@ -1250,6 +1347,11 @@ def build_app() -> gr.Blocks:
             concurrency_limit=1,
             concurrency_id="interview-start",
             api_name=False,
+        ).then(
+            load_history_callback,
+            inputs=token_state,
+            outputs=history_outputs,
+            api_name=False,
         )
         submit_answer_button.click(
             begin_answer_submission,
@@ -1277,6 +1379,11 @@ def build_app() -> gr.Blocks:
             concurrency_limit=1,
             concurrency_id="interview-answer",
             api_name=False,
+        ).then(
+            load_history_callback,
+            inputs=token_state,
+            outputs=history_outputs,
+            api_name=False,
         )
         restart_interview_button.click(
             clear_interview_workspace,
@@ -1296,6 +1403,12 @@ def build_app() -> gr.Blocks:
                 interview_question_state,
             ],
             queue=False,
+            api_name=False,
+        )
+        refresh_history_button.click(
+            load_history_callback,
+            inputs=token_state,
+            outputs=history_outputs,
             api_name=False,
         )
 

@@ -7,6 +7,11 @@ from unittest.mock import patch
 
 import frontend
 from pbl_jobs_finder import Message
+from pbl_jobs_finder.modules.history import (
+    HistorySnapshot,
+    InterviewHistoryItem,
+    ResumeHistoryItem,
+)
 from pbl_jobs_finder.modules.interview_agent import (
     InterviewAnswerOutcome,
     InterviewReport,
@@ -110,6 +115,8 @@ class FrontendAuthTests(unittest.TestCase):
                 frontend.start_interview_callback,
                 frontend.submit_interview_answer_callback,
                 frontend.clear_interview_workspace,
+                frontend.clear_history_workspace,
+                frontend.load_history_callback,
                 frontend.use_optimized_resume_callback,
                 frontend.open_supplement_callback,
                 frontend.login,
@@ -118,6 +125,59 @@ class FrontendAuthTests(unittest.TestCase):
             }
             <= callbacks
         )
+
+    def test_history_callback_formats_recent_summaries(self) -> None:
+        snapshot = HistorySnapshot(
+            resumes=(
+                ResumeHistoryItem(12, "2026-09-18 15:20", "Python 后端工程师", 88),
+            ),
+            interviews=(
+                InterviewHistoryItem(
+                    23,
+                    "2026-09-18 16:10",
+                    "Java 后端工程师",
+                    5,
+                    "completed",
+                ),
+            ),
+        )
+        with patch.object(frontend.history_service, "get_recent", return_value=snapshot):
+            resumes, interviews, status = frontend.load_history_callback("token")
+
+        self.assertEqual(resumes[0][1:], ["Python 后端工程师", "88 / 100"])
+        self.assertEqual(interviews[0][1:], ["Java 后端工程师", "5 轮", "已完成"])
+        self.assertIn("简历诊断 1 条", status)
+        self.assertIn("模拟面试 1 条", status)
+
+    def test_history_callback_handles_empty_invalid_and_unexpected_failures(self) -> None:
+        with patch.object(
+            frontend.history_service,
+            "get_recent",
+            return_value=HistorySnapshot(resumes=(), interviews=()),
+        ):
+            empty = frontend.load_history_callback("token")
+        self.assertEqual(empty[:2], ([], []))
+        self.assertIn("暂无历史记录", empty[2])
+
+        with patch.object(
+            frontend.history_service,
+            "get_recent",
+            side_effect=AuthenticationError("登录已失效，请重新登录"),
+        ):
+            invalid = frontend.load_history_callback("expired-token")
+        self.assertEqual(invalid[:2], ([], []))
+        self.assertIn("登录已失效", invalid[2])
+
+        with (
+            patch.object(
+                frontend.history_service,
+                "get_recent",
+                side_effect=RuntimeError("database unavailable"),
+            ),
+            patch.object(frontend, "report_exception", return_value="history123"),
+        ):
+            failed = frontend.load_history_callback("token")
+        self.assertIn("history123", failed[2])
 
     def test_interview_callback_displays_first_question_and_updates_quota(self) -> None:
         outcome = InterviewStartOutcome(

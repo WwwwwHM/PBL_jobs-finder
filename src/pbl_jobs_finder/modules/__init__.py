@@ -7,6 +7,13 @@ from pbl_jobs_finder.modules.auth import (
     verify_login,
     verify_token,
 )
+from pbl_jobs_finder.modules.history import (
+    HistoryService,
+    HistorySnapshot,
+    InterviewHistoryItem,
+    ResumeHistoryItem,
+    history_service,
+)
 from pbl_jobs_finder.modules.interview_agent import (
     InterviewAccessError,
     InterviewAnswerOutcome,
@@ -51,8 +58,11 @@ __all__ = [
     "AuthenticationError",
     "DiagnosisOutcome",
     "GeneratedResumeOutcome",
+    "HistoryService",
+    "HistorySnapshot",
     "InterviewAccessError",
     "InterviewAnswerOutcome",
+    "InterviewHistoryItem",
     "InterviewReport",
     "InterviewService",
     "InterviewStartOutcome",
@@ -65,6 +75,7 @@ __all__ = [
     "ResumeDiagnosis",
     "ResumeDiagnosisService",
     "ResumeDocument",
+    "ResumeHistoryItem",
     "ResumeOCRError",
     "ResumePDFError",
     "create_resume_pdf",
@@ -73,6 +84,7 @@ __all__ = [
     "generate_first_question",
     "generate_interview_report",
     "generate_resume_with_supplement",
+    "history_service",
     "optimize_resume",
     "quota_service",
     "render_resume_html",
