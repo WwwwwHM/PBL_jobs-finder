@@ -10,15 +10,8 @@ from threading import RLock
 from zoneinfo import ZoneInfo
 
 from pbl_jobs_finder.config.settings import get_settings
+from pbl_jobs_finder.exceptions import AuthenticationError, QuotaExceededError
 from pbl_jobs_finder.modules.auth import verify_token
-
-
-class AuthenticationError(ValueError):
-    """The supplied token does not identify an active user."""
-
-
-class QuotaExceededError(ValueError):
-    """The user's daily quota has been exhausted."""
 
 
 @dataclass(frozen=True, slots=True)

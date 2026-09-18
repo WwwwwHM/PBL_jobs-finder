@@ -2,6 +2,9 @@
 
 import logging
 
+from pbl_jobs_finder.exceptions import PBLJobsFinderError as PBLJobsFinderError
+from pbl_jobs_finder.messages import Message as Message
+from pbl_jobs_finder.messages import MessageResult as MessageResult
 from pbl_jobs_finder.models.database import database
 from pbl_jobs_finder.utils.logging import configure_logging, report_exception
 

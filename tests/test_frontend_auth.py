@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import frontend
+from pbl_jobs_finder import Message
 from pbl_jobs_finder.modules.interview_agent import (
     InterviewAnswerOutcome,
     InterviewReport,
@@ -29,7 +30,11 @@ from pbl_jobs_finder.modules.resume_pdf import (
 class FrontendAuthTests(unittest.TestCase):
     def test_login_stores_verified_token_in_state_and_browser_bridge(self) -> None:
         with (
-            patch.object(frontend, "verify_login", return_value=("token", "登录成功")),
+            patch.object(
+                frontend,
+                "verify_login",
+                return_value=Message.success("登录成功", data="token"),
+            ),
             patch.object(
                 frontend,
                 "verify_token",
@@ -60,7 +65,11 @@ class FrontendAuthTests(unittest.TestCase):
         self.assertEqual(result[3:], ("", "", "", ""))
 
     def test_failed_login_stays_logged_out(self) -> None:
-        with patch.object(frontend, "verify_login", return_value=(None, "验证码错误")):
+        with patch.object(
+            frontend,
+            "verify_login",
+            return_value=Message.failure("验证码错误"),
+        ):
             result = frontend.login("13800138000", "000000")
         self.assertEqual(result[2], "验证码错误")
         self.assertEqual(result[5:], ("", ""))

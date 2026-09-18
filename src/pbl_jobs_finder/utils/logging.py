@@ -13,6 +13,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from pbl_jobs_finder.config import get_settings
+from pbl_jobs_finder.exceptions import PBLJobsFinderError
 
 _MANAGED_HANDLER = "_pbl_jobs_finder_handler"
 _PHONE_PATTERN = re.compile(r"(?<!\d)1\d{10}(?!\d)")
@@ -157,11 +158,19 @@ def report_exception(
     context_text = " ".join(
         f"{key}={value!r}" for key, value in sorted(context.items())
     )
+    error_fields = (
+        " code={code} description={description!r} message={message!r}".format(
+            **error.to_dict()
+        )
+        if isinstance(error, PBLJobsFinderError)
+        else ""
+    )
     logger.error(
-        "Operation failed error_id=%s operation=%s exception=%s%s",
+        "Operation failed error_id=%s operation=%s exception=%s%s%s",
         error_id,
         operation,
         type(error).__name__,
+        error_fields,
         f" {context_text}" if context_text else "",
         exc_info=_exception_info(error),
     )

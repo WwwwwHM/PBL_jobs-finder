@@ -9,6 +9,7 @@ from contextlib import redirect_stdout
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from pbl_jobs_finder import Message
 from pbl_jobs_finder.models.database import Database
 from pbl_jobs_finder.modules.auth import AuthService
 
@@ -28,12 +29,13 @@ class AuthServiceTests(unittest.TestCase):
 
     def test_send_code_validates_phone_and_prints_six_digits(self) -> None:
         self.assertEqual(
-            self.auth.send_verification_code("123"), (False, "请输入有效的 11 位手机号")
+            self.auth.send_verification_code("123"),
+            Message.failure("请输入有效的 11 位手机号"),
         )
         output = io.StringIO()
         with redirect_stdout(output):
             result = self.auth.send_verification_code("13800138000")
-        self.assertEqual(result, (True, "验证码已发送，请查收"))
+        self.assertEqual(result, Message.success("验证码已发送，请查收"))
         printed = output.getvalue().strip().split(": ")[-1]
         self.assertRegex(printed, r"^\d{6}$")
 
@@ -41,30 +43,34 @@ class AuthServiceTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as output:
             self.auth.send_verification_code("13800138000")
         code = output.getvalue().strip().split(": ")[-1]
-        token, message = self.auth.verify_login(
+        result = self.auth.verify_login(
             "13800138000", "000000" if code != "000000" else "111111"
         )
-        self.assertIsNone(token)
-        self.assertIn("验证码错误", message)
-        token, message = self.auth.verify_login("13800138000", code)
-        self.assertIsNotNone(token)
-        self.assertEqual(message, "登录成功")
-        second_token, second_message = self.auth.verify_login("13800138000", code)
-        self.assertIsNone(second_token)
-        self.assertIn("不存在", second_message)
+        self.assertFalse(result.success)
+        self.assertIsNone(result.data)
+        self.assertIn("验证码错误", result.message)
+        result = self.auth.verify_login("13800138000", code)
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.data)
+        self.assertEqual(result.message, "登录成功")
+        second_result = self.auth.verify_login("13800138000", code)
+        self.assertFalse(second_result.success)
+        self.assertIsNone(second_result.data)
+        self.assertIn("不存在", second_result.message)
 
         with redirect_stdout(io.StringIO()):
             self.auth.send_verification_code("13900139000")
         self.now += timedelta(minutes=5)
-        token, message = self.auth.verify_login("13900139000", code)
-        self.assertIsNone(token)
-        self.assertIn("过期", message)
+        result = self.auth.verify_login("13900139000", code)
+        self.assertFalse(result.success)
+        self.assertIsNone(result.data)
+        self.assertIn("过期", result.message)
 
     def test_token_is_reused_verified_and_revocable(self) -> None:
         with redirect_stdout(io.StringIO()) as output:
             self.auth.send_verification_code("13800138000")
         code = output.getvalue().strip().split(": ")[-1]
-        token, _ = self.auth.verify_login("13800138000", code)
+        token = self.auth.verify_login("13800138000", code).data
         self.assertIsNotNone(token)
         self.assertEqual(
             self.auth.verify_token(token),
@@ -74,7 +80,7 @@ class AuthServiceTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as output:
             self.auth.send_verification_code("13800138000")
         next_code = output.getvalue().strip().split(": ")[-1]
-        reused, _ = self.auth.verify_login("13800138000", next_code)
+        reused = self.auth.verify_login("13800138000", next_code).data
         self.assertEqual(reused, token)
         self.assertTrue(self.auth.revoke_token(token))
         self.assertIsNone(self.auth.verify_token(token))
@@ -83,17 +89,17 @@ class AuthServiceTests(unittest.TestCase):
             self.auth.send_verification_code("13800138000")
         expiry_code = output.getvalue().strip().split(": ")[-1]
         self.now += timedelta(days=7)
-        expired_token, expired_message = self.auth.verify_login(
+        expired = self.auth.verify_login(
             "13800138000", expiry_code
         )
-        self.assertIsNone(expired_token)
-        self.assertIn("过期", expired_message)
+        self.assertIsNone(expired.data)
+        self.assertIn("过期", expired.message)
 
     def test_token_expires_after_seven_days(self) -> None:
         with redirect_stdout(io.StringIO()) as output:
             self.auth.send_verification_code("13800138000")
         code = output.getvalue().strip().split(": ")[-1]
-        token, _ = self.auth.verify_login("13800138000", code)
+        token = self.auth.verify_login("13800138000", code).data
         self.now += timedelta(days=7)
         self.assertIsNone(self.auth.verify_token(token))
 

@@ -8,12 +8,10 @@ from pathlib import Path
 import pdfplumber
 from PyPDF2 import PdfReader
 
+from pbl_jobs_finder.exceptions import ResumeOCRError, ResumeParseError
+
 MAX_PDF_SIZE = 12 * 1024 * 1024
 MAX_RESUME_CHARACTERS = 60_000
-
-
-class ResumeParseError(ValueError):
-    """An uploaded resume cannot be safely used for diagnosis."""
 
 
 def parse_resume_pdf(file_path: str | Path) -> str:
@@ -51,10 +49,7 @@ def parse_resume_pdf(file_path: str | Path) -> str:
 
     text = _normalize_extracted_text(text)
     if not text and _pdf_contains_images(path):
-        from pbl_jobs_finder.modules.resume_ocr import (
-            ResumeOCRError,
-            extract_text_from_image_pdf,
-        )
+        from pbl_jobs_finder.modules.resume_ocr import extract_text_from_image_pdf
 
         try:
             text = _normalize_extracted_text(extract_text_from_image_pdf(path))

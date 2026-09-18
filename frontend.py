@@ -6,38 +6,32 @@ import logging
 
 import gradio as gr
 
+from pbl_jobs_finder.exceptions import (
+    AuthenticationError,
+    EmbeddingConfigurationError,
+    EmbeddingServiceError,
+    InterviewAccessError,
+    InterviewUnavailableError,
+    InterviewValidationError,
+    LLMConfigurationError,
+    LLMServiceError,
+    QuotaExceededError,
+    ResumeAccessError,
+    ResumeParseError,
+    ResumePDFError,
+    ResumeResponseError,
+    ResumeValidationError,
+)
 from pbl_jobs_finder.modules.auth import (
     revoke_token,
     send_verification_code,
     verify_login,
     verify_token,
 )
-from pbl_jobs_finder.modules.interview_agent import (
-    InterviewAccessError,
-    InterviewReport,
-    InterviewService,
-    InterviewUnavailableError,
-    InterviewValidationError,
-)
-from pbl_jobs_finder.modules.quota import (
-    AuthenticationError,
-    QuotaExceededError,
-    quota_service,
-)
-from pbl_jobs_finder.modules.resume_diagnosis import (
-    ResumeAccessError,
-    ResumeDiagnosisService,
-    ResumeParseError,
-    ResumePDFError,
-    ResumeResponseError,
-    ResumeValidationError,
-)
+from pbl_jobs_finder.modules.interview_agent import InterviewReport, InterviewService
+from pbl_jobs_finder.modules.quota import quota_service
+from pbl_jobs_finder.modules.resume_diagnosis import ResumeDiagnosisService
 from pbl_jobs_finder.modules.resume_pdf import document_to_markdown
-from pbl_jobs_finder.utils.embeddings import (
-    EmbeddingConfigurationError,
-    EmbeddingServiceError,
-)
-from pbl_jobs_finder.utils.llm_client import LLMConfigurationError, LLMServiceError
 from pbl_jobs_finder.utils.logging import configure_logging, report_exception
 
 logger = logging.getLogger(__name__)
@@ -67,8 +61,8 @@ def request_code(phone: str) -> str:
 
     try:
         phone = (phone or "").strip()
-        _, message = send_verification_code(phone)
-        return message
+        result = send_verification_code(phone)
+        return result.message
     except Exception as exc:  # noqa: BLE001 - callback must return a stable UI response
         error_id = report_exception(logger, "auth.request_code", exc)
         return f"验证码发送失败，请稍后重试（错误编号：{error_id}）"
@@ -78,13 +72,13 @@ def login(phone: str, code: str) -> tuple:
     """Authenticate and provide the token to server state and the browser."""
 
     try:
-        token, message = verify_login((phone or "").strip(), (code or "").strip())
+        result = verify_login((phone or "").strip(), (code or "").strip())
     except Exception as exc:  # noqa: BLE001 - callback must return a stable UI response
         error_id = report_exception(logger, "auth.login", exc)
         return _logged_out(f"登录失败，请稍后重试（错误编号：{error_id}）")
-    if token is None:
-        return _logged_out(message)
-    return restore_login(token)
+    if not result.success or result.data is None:
+        return _logged_out(result.message)
+    return restore_login(result.data)
 
 
 def _logged_out(message: str = "") -> tuple:

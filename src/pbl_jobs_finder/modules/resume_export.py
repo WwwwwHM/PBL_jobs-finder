@@ -14,13 +14,11 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 from docx.text.paragraph import Paragraph
 
+from pbl_jobs_finder.exceptions import ResumeExportError
+
 _INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _BULLET = re.compile(r"^\s*[-*•]\s+(.*)$")
 _NUMBERED = re.compile(r"^\s*\d+[.)、]\s+(.*)$")
-
-
-class ResumeExportError(RuntimeError):
-    """The optimized resume could not be written as a Word document."""
 
 
 def create_resume_docx(

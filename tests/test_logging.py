@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pbl_jobs_finder.exceptions import ResumeParseError
 from pbl_jobs_finder.utils.logging import (
     configure_logging,
     report_exception,
@@ -75,6 +76,27 @@ class LoggingTests(unittest.TestCase):
 
                 self.assertEqual(first, second)
                 self.assertEqual(len(managed_handlers), 2)
+            finally:
+                shutdown_logging()
+
+    def test_custom_exception_log_contains_structured_error_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                log_path = configure_logging(log_dir=temp_dir, timezone_name="UTC")
+                logger = logging.getLogger("pbl_jobs_finder.tests.logging")
+
+                try:
+                    raise ResumeParseError("PDF 内容无效")
+                except ResumeParseError as exc:
+                    report_exception(logger, "resume.parse", exc)
+
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+                content = Path(log_path).read_text(encoding="utf-8")
+
+                self.assertIn("code=13005", content)
+                self.assertIn("description='上传的简历解析失败'", content)
+                self.assertIn("message='PDF 内容无效'", content)
             finally:
                 shutdown_logging()
 

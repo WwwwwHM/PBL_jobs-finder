@@ -9,16 +9,12 @@ from typing import Any, Protocol
 import requests
 
 from pbl_jobs_finder.config import get_settings
+from pbl_jobs_finder.exceptions import (
+    EmbeddingConfigurationError,
+    EmbeddingServiceError,
+)
 
 MAX_EMBEDDING_BATCH_SIZE = 20
-
-
-class EmbeddingConfigurationError(RuntimeError):
-    """The application has no usable embedding configuration."""
-
-
-class EmbeddingServiceError(RuntimeError):
-    """The embedding provider failed or returned an invalid response."""
 
 
 class EmbeddingProvider(Protocol):

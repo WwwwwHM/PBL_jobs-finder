@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from threading import RLock
 
+from pbl_jobs_finder.messages import Message, MessageResult
 from pbl_jobs_finder.models.database import Database, database
 from pbl_jobs_finder.models.repositories import get_or_create_user, get_user
 
@@ -57,12 +58,12 @@ class AuthService:
         self._phone_tokens: dict[str, str] = {}
         self._lock = RLock()
 
-    def send_verification_code(self, phone: str) -> tuple[bool, str]:
+    def send_verification_code(self, phone: str) -> MessageResult[None]:
         """Generate and print a six-digit code valid for five minutes."""
 
         phone = _normalize_phone(phone)
         if not PHONE_PATTERN.fullmatch(phone):
-            return False, "请输入有效的 11 位手机号"
+            return Message.failure("请输入有效的 11 位手机号")
 
         now = self._now()
         code = f"{secrets.randbelow(1_000_000):06d}"
@@ -73,26 +74,26 @@ class AuthService:
             )
         # Mock delivery is intentionally visible in the server console.
         print(f"[AUTH] verification code for {phone}: {code}")
-        return True, "验证码已发送，请查收"
+        return Message.success("验证码已发送，请查收")
 
-    def verify_login(self, phone: str, code: str) -> tuple[str | None, str]:
+    def verify_login(self, phone: str, code: str) -> MessageResult[str]:
         """Verify a code and return a reused or newly-issued token."""
 
         phone = _normalize_phone(phone)
         code = (code or "").strip()
         if not PHONE_PATTERN.fullmatch(phone):
-            return None, "登录失败：请输入有效的 11 位手机号"
+            return Message.failure("登录失败：请输入有效的 11 位手机号")
         if not CODE_PATTERN.fullmatch(code):
-            return None, "登录失败：请输入 6 位数字验证码"
+            return Message.failure("登录失败：请输入 6 位数字验证码")
 
         now = self._now()
         with self._lock:
             entry = self._verification_codes.get(phone)
             if entry is None or entry.expires_at <= now:
                 self._verification_codes.pop(phone, None)
-                return None, "登录失败：验证码已过期或不存在"
+                return Message.failure("登录失败：验证码已过期或不存在")
             if not hmac.compare_digest(entry.code, code):
-                return None, "登录失败：验证码错误"
+                return Message.failure("登录失败：验证码错误")
             # A code is single-use after successful verification; wrong codes
             # leave it intact so the user can retry.
             self._verification_codes.pop(phone, None)
@@ -108,7 +109,7 @@ class AuthService:
         self.database.initialize()
         with self.database.session() as session:
             get_or_create_user(session, phone)
-        return token, "登录成功"
+        return Message.success("登录成功", data=token)
 
     def verify_token(self, token: str) -> dict[str, str] | None:
         """Return the authenticated user's public identity, or ``None``."""
@@ -179,11 +180,11 @@ def _normalize_phone(phone: str | None) -> str:
 _default_auth_service = AuthService()
 
 
-def send_verification_code(phone: str) -> tuple[bool, str]:
+def send_verification_code(phone: str) -> MessageResult[None]:
     return _default_auth_service.send_verification_code(phone)
 
 
-def verify_login(phone: str, code: str) -> tuple[str | None, str]:
+def verify_login(phone: str, code: str) -> MessageResult[str]:
     return _default_auth_service.verify_login(phone, code)
 
 

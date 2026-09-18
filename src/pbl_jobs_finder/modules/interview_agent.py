@@ -8,6 +8,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
 
+from pbl_jobs_finder.exceptions import (
+    AuthenticationError,
+    InterviewAccessError,
+    InterviewUnavailableError,
+    InterviewValidationError,
+)
 from pbl_jobs_finder.models.database import Database, database
 from pbl_jobs_finder.models.repositories import (
     create_interview_session,
@@ -15,11 +21,7 @@ from pbl_jobs_finder.models.repositories import (
     update_interview_session,
 )
 from pbl_jobs_finder.modules.auth import verify_token
-from pbl_jobs_finder.modules.quota import (
-    AuthenticationError,
-    QuotaService,
-    quota_service,
-)
+from pbl_jobs_finder.modules.quota import QuotaService, quota_service
 from pbl_jobs_finder.utils.llm_client import ChatClient, create_default_chat_client
 from pbl_jobs_finder.vector_store import ChromaVectorStore, create_default_vector_store
 
@@ -140,18 +142,6 @@ REPORT_USER_PROMPT = """【目标岗位】
 {history}
 
 请生成本次模拟面试报告。只输出指定 JSON。"""
-
-
-class InterviewValidationError(ValueError):
-    """Interview inputs or a generated question failed validation."""
-
-
-class InterviewUnavailableError(RuntimeError):
-    """Interview infrastructure is not ready to create a session."""
-
-
-class InterviewAccessError(PermissionError):
-    """The authenticated user does not own the requested interview session."""
 
 
 @dataclass(frozen=True, slots=True)

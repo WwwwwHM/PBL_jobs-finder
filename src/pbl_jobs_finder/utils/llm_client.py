@@ -5,14 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from pbl_jobs_finder.config import get_settings
-
-
-class LLMConfigurationError(RuntimeError):
-    """The application has no usable model configuration."""
-
-
-class LLMServiceError(RuntimeError):
-    """The configured model could not complete a request."""
+from pbl_jobs_finder.exceptions import LLMConfigurationError, LLMServiceError
 
 
 class ChatClient(Protocol):

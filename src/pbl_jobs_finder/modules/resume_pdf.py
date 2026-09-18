@@ -23,6 +23,8 @@ from pydantic import (
     model_validator,
 )
 
+from pbl_jobs_finder.exceptions import ResumeDocumentError, ResumePDFError
+
 ShortText = Annotated[str, Field(max_length=160)]
 LongText = Annotated[str, Field(max_length=1200)]
 Highlight = Annotated[str, Field(max_length=600)]
@@ -34,14 +36,6 @@ _DEFAULT_AVATAR_PATH = Path(__file__).with_name("assets") / "default_avatar.svg"
 
 _INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
-
-
-class ResumeDocumentError(ValueError):
-    """The model response cannot be represented by the resume schema."""
-
-
-class ResumePDFError(RuntimeError):
-    """The validated resume could not be rendered as a PDF."""
 
 
 class _ResumeModel(BaseModel):

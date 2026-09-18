@@ -9,12 +9,10 @@ from typing import Protocol
 
 import pypdfium2 as pdfium
 
+from pbl_jobs_finder.exceptions import ResumeOCRError
+
 MAX_OCR_PAGES = 5
 OCR_RENDER_SCALE = 1.0
-
-
-class ResumeOCRError(RuntimeError):
-    """An image PDF could not be converted into usable resume text."""
 
 
 class OCREngine(Protocol):

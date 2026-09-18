@@ -9,6 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pbl_jobs_finder.config import get_settings
+from pbl_jobs_finder.exceptions import (
+    AuthenticationError,
+    ResumeAccessError,
+    ResumeParseError,
+    ResumePDFError,
+    ResumeResponseError,
+    ResumeValidationError,
+)
 from pbl_jobs_finder.models.database import Database, database
 from pbl_jobs_finder.models.repositories import (
     create_resume_record,
@@ -16,22 +24,16 @@ from pbl_jobs_finder.models.repositories import (
     update_resume_record,
 )
 from pbl_jobs_finder.modules.auth import verify_token
-from pbl_jobs_finder.modules.quota import (
-    AuthenticationError,
-    QuotaService,
-    quota_service,
-)
+from pbl_jobs_finder.modules.quota import QuotaService, quota_service
 from pbl_jobs_finder.modules.resume_export import create_resume_docx
 from pbl_jobs_finder.modules.resume_parser import (
     MAX_RESUME_CHARACTERS,
-    ResumeParseError,
     parse_resume_pdf,
 )
 from pbl_jobs_finder.modules.resume_pdf import (
     PDFRenderer,
     ResumeDocument,
     ResumeDocumentError,
-    ResumePDFError,
     create_resume_pdf,
     parse_resume_document,
     prepare_photo_data_uri,
@@ -102,18 +104,6 @@ GENERATION_USER_PROMPT = """【目标岗位】
 {json_schema}
 
 请生成完整、准确、适合目标岗位的新版简历 JSON。输出前逐项检查补充履历中的事实是否已经归入对应简历栏目并完成职业化改写；不要输出检查过程。只输出 JSON。"""
-
-
-class ResumeValidationError(ValueError):
-    """Resume diagnosis inputs are incomplete or outside supported limits."""
-
-
-class ResumeResponseError(RuntimeError):
-    """The model returned a response that cannot be safely persisted."""
-
-
-class ResumeAccessError(PermissionError):
-    """The authenticated user does not own the requested resume record."""
 
 
 @dataclass(frozen=True, slots=True)
