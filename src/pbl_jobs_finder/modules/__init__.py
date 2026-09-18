@@ -10,11 +10,14 @@ from pbl_jobs_finder.modules.auth import (
 from pbl_jobs_finder.modules.interview_agent import (
     InterviewAccessError,
     InterviewAnswerOutcome,
+    InterviewReport,
     InterviewService,
     InterviewStartOutcome,
     InterviewUnavailableError,
     InterviewValidationError,
+    ReferenceAnswer,
     generate_first_question,
+    generate_interview_report,
 )
 from pbl_jobs_finder.modules.quota import (
     AuthenticationError,
@@ -50,6 +53,7 @@ __all__ = [
     "GeneratedResumeOutcome",
     "InterviewAccessError",
     "InterviewAnswerOutcome",
+    "InterviewReport",
     "InterviewService",
     "InterviewStartOutcome",
     "InterviewUnavailableError",
@@ -57,6 +61,7 @@ __all__ = [
     "QuotaExceededError",
     "QuotaService",
     "QuotaStatus",
+    "ReferenceAnswer",
     "ResumeDiagnosis",
     "ResumeDiagnosisService",
     "ResumeDocument",
@@ -66,6 +71,7 @@ __all__ = [
     "diagnose_resume",
     "extract_text_from_image_pdf",
     "generate_first_question",
+    "generate_interview_report",
     "generate_resume_with_supplement",
     "optimize_resume",
     "quota_service",

@@ -45,6 +45,7 @@ class FakeVectorStore:
 class FakeChatClient:
     def __init__(self, response: str) -> None:
         self.response = response
+        self.responses: list[str] = []
         self.system_prompt = ""
         self.user_prompt = ""
         self.calls = 0
@@ -53,6 +54,8 @@ class FakeChatClient:
         self.calls += 1
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
+        if self.responses:
+            return self.responses.pop(0)
         return self.response
 
 
@@ -99,6 +102,55 @@ class InterviewServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.database.dispose()
         self.temp_dir.cleanup()
+
+    @staticmethod
+    def _report_json(**score_overrides: object) -> str:
+        scores = {"logic": 82, "professional": 78, "communication": 85}
+        scores.update(score_overrides)
+        return json.dumps(
+            {
+                "scores": scores,
+                "summary": "候选人能够按步骤分析问题并说明主要取舍，整体表达清楚，但部分技术细节和量化验证仍需加强。",
+                "knowledge_gaps": [
+                    "缺少对容量指标和告警阈值的具体说明",
+                    "故障恢复目标与数据一致性取舍阐述不足",
+                ],
+                "improvement_suggestions": [
+                    "回答系统设计题时先明确约束，再说明方案、取舍和验证指标",
+                    "为项目案例补充延迟、吞吐量或恢复时间等真实量化结果",
+                ],
+                "reference_answers": [
+                    {
+                        "question": "请总结你解决复杂线上故障的方法论和复盘方式？",
+                        "answer": "先确认影响范围并止损，再按监控、日志和链路追踪收集证据，定位根因后灰度修复，最后用复盘行动项验证改进是否生效。",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    def _move_to_final_question(self, session_id: int) -> str:
+        final_question = "请总结你解决复杂线上故障的方法论和复盘方式？"
+        with self.database.session() as session:
+            saved = get_interview_session(session, session_id)
+            conversation = json.loads(saved.conversation_json)
+            conversation.append(
+                {
+                    "role": "interviewer",
+                    "content": final_question,
+                    "kind": "main_question",
+                    "round": 5,
+                }
+            )
+            update_interview_session(
+                session,
+                session_id,
+                current_question=final_question,
+                question_rounds=5,
+                follow_up_count=0,
+                conversation=conversation,
+            )
+        return final_question
 
     def test_start_uses_all_context_and_persists_first_question_state(self) -> None:
         outcome = self.service.start(
@@ -245,34 +297,18 @@ class InterviewServiceTests(unittest.TestCase):
 
     def test_fifth_main_question_completion_marks_session_completed(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")
-        final_question = "请总结你解决复杂线上故障的方法论和复盘方式？"
-        with self.database.session() as session:
-            saved = get_interview_session(session, started.session_id)
-            conversation = json.loads(saved.conversation_json)
-            conversation.append(
+        final_question = self._move_to_final_question(started.session_id)
+        self.client.responses = [
+            json.dumps(
                 {
-                    "role": "interviewer",
-                    "content": final_question,
-                    "kind": "main_question",
-                    "round": 5,
-                }
-            )
-            update_interview_session(
-                session,
-                started.session_id,
-                current_question=final_question,
-                question_rounds=5,
-                follow_up_count=0,
-                conversation=conversation,
-            )
-        self.client.response = json.dumps(
-            {
-                "feedback": "回答覆盖了止损、定位、修复和复盘环节，并说明了验证闭环。建议进一步量化恢复时间目标。",
-                "needs_follow_up": False,
-                "next_question": "模型不应保留的额外问题？",
-            },
-            ensure_ascii=False,
-        )
+                    "feedback": "回答覆盖了止损、定位、修复和复盘环节，并说明了验证闭环。建议进一步量化恢复时间目标。",
+                    "needs_follow_up": False,
+                    "next_question": "模型不应保留的额外问题？",
+                },
+                ensure_ascii=False,
+            ),
+            self._report_json(),
+        ]
         outcome = self.service.submit_answer(
             token="token-a",
             session_id=started.session_id,
@@ -281,10 +317,51 @@ class InterviewServiceTests(unittest.TestCase):
         )
         self.assertTrue(outcome.is_finished)
         self.assertEqual(outcome.next_question, "")
+        self.assertIsNotNone(outcome.report)
+        self.assertEqual(outcome.report.logic_score, 82)
         with self.database.session() as session:
             saved = get_interview_session(session, started.session_id)
             self.assertEqual(saved.status, "completed")
             self.assertEqual(saved.current_question, "")
+            self.assertEqual(json.loads(saved.report)["scores"]["professional"], 78)
+
+        loaded = self.service.get_report(
+            token="token-a", session_id=started.session_id
+        )
+        self.assertEqual(loaded.communication_score, 85)
+        with self.assertRaises(InterviewAccessError):
+            self.service.get_report(token="token-b", session_id=started.session_id)
+
+    def test_invalid_report_leaves_final_answer_uncommitted_for_retry(self) -> None:
+        started = self.service.start(token="token-a", position="Java 后端工程师")
+        final_question = self._move_to_final_question(started.session_id)
+        self.client.responses = [
+            json.dumps(
+                {
+                    "feedback": "回答覆盖了主要处置步骤，但仍需补充恢复目标和验证指标。",
+                    "needs_follow_up": False,
+                    "next_question": "",
+                },
+                ensure_ascii=False,
+            ),
+            self._report_json(logic=101),
+        ]
+
+        with self.assertRaisesRegex(InterviewValidationError, "评分超出"):
+            self.service.submit_answer(
+                token="token-a",
+                session_id=started.session_id,
+                answer="我会先止损，再定位根因、灰度修复并组织复盘。",
+                expected_question=final_question,
+            )
+
+        with self.database.session() as session:
+            saved = get_interview_session(session, started.session_id)
+            self.assertEqual(saved.status, "in_progress")
+            self.assertEqual(saved.current_question, final_question)
+            self.assertEqual(saved.report, "")
+            conversation = json.loads(saved.conversation_json)
+            self.assertNotEqual(conversation[-1].get("kind"), "answer")
 
     def test_answer_requires_valid_input_and_session_ownership(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")

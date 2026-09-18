@@ -14,6 +14,7 @@ from pbl_jobs_finder.modules.auth import (
 )
 from pbl_jobs_finder.modules.interview_agent import (
     InterviewAccessError,
+    InterviewReport,
     InterviewService,
     InterviewUnavailableError,
     InterviewValidationError,
@@ -493,14 +494,30 @@ def submit_interview_answer_callback(
         )
     feedback = f"### AI 反馈\n\n{outcome.feedback}"
     if outcome.is_finished:
+        if outcome.report is None:
+            error_id = report_exception(
+                logger,
+                "interview.submit_answer.missing_report",
+                RuntimeError("completed interview returned no report"),
+                session_id=outcome.session_id,
+            )
+            return (
+                f"{feedback}\n\n**报告展示失败：** 请点击“重新开始”开启新一轮面试（错误编号：{error_id}）",
+                gr.update(value="", interactive=False),
+                gr.update(interactive=False),
+                "已完成 5 题",
+                "### 本轮面试已完成",
+                "",
+                "面试已完成，但报告未能展示。",
+            )
         return (
-            f"{feedback}\n\n本轮 5 道主问题已完成。",
+            f"{feedback}\n\n{_format_interview_report(outcome.report)}",
             gr.update(value="", interactive=False),
             gr.update(interactive=False),
             "已完成 5 题",
             "### 本轮面试已完成",
             "",
-            "面试已完成。完整报告将在报告功能中生成。",
+            "面试已完成，报告已保存。可点击“重新开始”开启新一轮面试。",
         )
     if outcome.is_follow_up:
         progress = (
@@ -522,6 +539,44 @@ def submit_interview_answer_callback(
         outcome.next_question,
         status,
     )
+
+
+def _format_interview_report(report: InterviewReport) -> str:
+    """Render a validated interview report as concise Markdown."""
+
+    def safe(value: str) -> str:
+        return value.replace("|", "\\|")
+
+    gaps = "\n".join(f"- {safe(item)}" for item in report.knowledge_gaps)
+    suggestions = "\n".join(
+        f"- {safe(item)}" for item in report.improvement_suggestions
+    )
+    references = "\n\n".join(
+        f"**问题 {index}：** {safe(item.question)}\n\n"
+        f"**参考回答：** {safe(item.answer)}"
+        for index, item in enumerate(report.reference_answers, 1)
+    )
+    return f"""## 面试报告
+
+| 逻辑能力 | 专业能力 | 表达能力 |
+| ---: | ---: | ---: |
+| {report.logic_score} / 100 | {report.professional_score} / 100 | {report.communication_score} / 100 |
+
+### 总体评价
+
+{safe(report.summary)}
+
+### 知识盲区
+
+{gaps}
+
+### 改进建议
+
+{suggestions}
+
+### 参考回答
+
+{references}"""
 
 
 def _quota_label(token: str) -> str:
@@ -973,9 +1028,13 @@ def build_app() -> gr.Blocks:
                                 "使用当前优化稿",
                                 size="sm",
                             )
-                    start_interview_button = gr.Button(
-                        "开始面试", variant="primary", elem_classes="primary-button"
-                    )
+                    with gr.Row():
+                        start_interview_button = gr.Button(
+                            "开始面试",
+                            variant="primary",
+                            elem_classes="primary-button",
+                        )
+                        restart_interview_button = gr.Button("重新开始")
                     interview_status = gr.Markdown()
                     with gr.Column(
                         visible=False,
@@ -1223,6 +1282,26 @@ def build_app() -> gr.Blocks:
             trigger_mode="once",
             concurrency_limit=1,
             concurrency_id="interview-answer",
+            api_name=False,
+        )
+        restart_interview_button.click(
+            clear_interview_workspace,
+            outputs=[
+                interview_position,
+                interview_jd,
+                interview_resume,
+                interview_status,
+                interview_session_state,
+                interview_progress,
+                interview_question,
+                interview_results,
+                start_interview_button,
+                interview_answer,
+                interview_feedback,
+                submit_answer_button,
+                interview_question_state,
+            ],
+            queue=False,
             api_name=False,
         )
 

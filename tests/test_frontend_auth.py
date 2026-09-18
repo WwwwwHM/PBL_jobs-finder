@@ -8,8 +8,10 @@ from unittest.mock import patch
 import frontend
 from pbl_jobs_finder.modules.interview_agent import (
     InterviewAnswerOutcome,
+    InterviewReport,
     InterviewStartOutcome,
     InterviewValidationError,
+    ReferenceAnswer,
 )
 from pbl_jobs_finder.modules.quota import AuthenticationError, QuotaStatus
 from pbl_jobs_finder.modules.resume_diagnosis import (
@@ -98,6 +100,7 @@ class FrontendAuthTests(unittest.TestCase):
                 frontend.generate_resume_callback,
                 frontend.start_interview_callback,
                 frontend.submit_interview_answer_callback,
+                frontend.clear_interview_workspace,
                 frontend.use_optimized_resume_callback,
                 frontend.open_supplement_callback,
                 frontend.login,
@@ -222,6 +225,50 @@ class FrontendAuthTests(unittest.TestCase):
         self.assertEqual(result[5], outcome.next_question)
         self.assertTrue(result[1]["interactive"])
         self.assertTrue(result[2]["interactive"])
+
+    def test_completed_interview_displays_saved_structured_report(self) -> None:
+        report = InterviewReport(
+            logic_score=82,
+            professional_score=78,
+            communication_score=85,
+            summary="候选人分析过程较清楚，能够覆盖关键步骤，但技术取舍和量化验证仍需加强。",
+            knowledge_gaps=("容量规划指标不够具体",),
+            improvement_suggestions=("回答前先明确约束，再说明方案、取舍和验证方式",),
+            reference_answers=(
+                ReferenceAnswer(
+                    question="如何定位线上接口延迟问题？",
+                    answer="先确认影响范围，再结合监控、日志和链路追踪逐层定位并验证修复效果。",
+                ),
+            ),
+        )
+        outcome = InterviewAnswerOutcome(
+            session_id=23,
+            question_round=5,
+            answer="先止损并定位根因",
+            feedback="回答覆盖了主要步骤，建议补充量化恢复目标。",
+            next_question="",
+            follow_up_count=0,
+            is_follow_up=False,
+            is_finished=True,
+            report=report,
+        )
+        with patch.object(
+            frontend.interview_service,
+            "submit_answer",
+            return_value=outcome,
+        ):
+            result = frontend.submit_interview_answer_callback(
+                outcome.answer, 23, "token", "请说明故障处理方法？"
+            )
+
+        self.assertIn("面试报告", result[0])
+        self.assertIn("82 / 100", result[0])
+        self.assertIn("容量规划", result[0])
+        self.assertIn("参考回答", result[0])
+        self.assertFalse(result[1]["interactive"])
+        self.assertFalse(result[2]["interactive"])
+        self.assertEqual(result[3], "已完成 5 题")
+        self.assertIn("报告已保存", result[6])
 
     def test_diagnosis_callback_exposes_editable_complete_resume(self) -> None:
         outcome = DiagnosisOutcome(
