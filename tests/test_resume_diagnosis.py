@@ -467,6 +467,7 @@ class ZhipuChatClientTests(unittest.TestCase):
                 model="glm-test",
                 timeout_seconds=12.5,
                 max_retries=1,
+                max_tokens=3072,
             ).complete("system", "user")
 
         self.assertEqual(result, "result")
@@ -478,7 +479,7 @@ class ZhipuChatClientTests(unittest.TestCase):
                 {"role": "user", "content": "user"},
             ],
             temperature=0.2,
-            max_tokens=4096,
+            max_tokens=3072,
             timeout=12.5,
         )
 

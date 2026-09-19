@@ -23,11 +23,15 @@ class ZhipuChatClient:
         model: str,
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
+        max_tokens: int = 4096,
     ) -> None:
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be greater than zero")
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
+        self.max_tokens = max_tokens
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         try:
@@ -45,7 +49,7 @@ class ZhipuChatClient:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.2,
-                max_tokens=4096,
+                max_tokens=self.max_tokens,
                 timeout=self.timeout_seconds,
             )
             content = response.choices[0].message.content
@@ -69,7 +73,7 @@ class ZhipuChatClient:
         return content.strip()
 
 
-def create_default_chat_client() -> ChatClient:
+def create_default_chat_client(*, max_tokens: int = 4096) -> ChatClient:
     settings = get_settings()
     if not settings.zhipu_api_key:
         raise LLMConfigurationError("未配置 ZHIPU_API_KEY，暂时无法使用 AI 功能")
@@ -78,6 +82,7 @@ def create_default_chat_client() -> ChatClient:
         model=settings.zhipu_model,
         timeout_seconds=settings.zhipu_timeout_seconds,
         max_retries=settings.zhipu_max_retries,
+        max_tokens=max_tokens,
     )
 
 

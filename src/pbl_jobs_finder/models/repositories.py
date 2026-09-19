@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from pbl_jobs_finder.models.entities import InterviewSession, ResumeRecord, User
@@ -18,9 +19,16 @@ def get_user(session: Session, phone: str) -> User | None:
 def get_or_create_user(session: Session, phone: str, nickname: str = "求职者") -> User:
     user = get_user(session, phone)
     if user is None:
-        user = User(phone=phone, nickname=nickname)
-        session.add(user)
-        session.flush()
+        try:
+            with session.begin_nested():
+                user = User(phone=phone, nickname=nickname)
+                session.add(user)
+                session.flush()
+        except IntegrityError:
+            # Another request may have created this phone after our first read.
+            user = get_user(session, phone)
+            if user is None:
+                raise
     return user
 
 

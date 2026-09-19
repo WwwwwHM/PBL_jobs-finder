@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -62,6 +65,28 @@ class FakeChatClient:
 class RaisingChatClient:
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         raise LLMServiceError("AI 服务响应超时，请稍后重试")
+
+
+class ConcurrentAnswerChatClient(FakeChatClient):
+    def __init__(self, response: str, delay_seconds: float = 0.1) -> None:
+        super().__init__(response)
+        self.delay_seconds = delay_seconds
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self._lock = threading.Lock()
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        if "【候选人回答】" not in user_prompt:
+            return super().complete(system_prompt, user_prompt)
+        with self._lock:
+            self.active_calls += 1
+            self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            time.sleep(self.delay_seconds)
+            return self.response
+        finally:
+            with self._lock:
+                self.active_calls -= 1
 
 
 class BrokenDatabase:
@@ -253,6 +278,70 @@ class InterviewServiceTests(unittest.TestCase):
                 answer="重复回答",
                 expected_question=started.question,
             )
+
+    def test_different_interview_answers_can_run_concurrently(self) -> None:
+        first = self.service.start(token="token-a", position="Java 后端工程师")
+        second = self.service.start(token="token-b", position="Java 后端工程师")
+        response = json.dumps(
+            {
+                "feedback": "回答说明了定位步骤，建议继续补充验证指标和回滚方案。",
+                "needs_follow_up": False,
+                "next_question": "请说明你会如何保证消息消费的幂等性？",
+            },
+            ensure_ascii=False,
+        )
+        client = ConcurrentAnswerChatClient(response)
+        self.service.chat_client = client
+
+        def submit(token: str, session_id: int, question: str) -> None:
+            self.service.submit_answer(
+                token=token,
+                session_id=session_id,
+                answer="我会先收集指标，再定位根因并验证修复效果。",
+                expected_question=question,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(submit, "token-a", first.session_id, first.question),
+                executor.submit(submit, "token-b", second.session_id, second.question),
+            ]
+            for future in futures:
+                future.result()
+
+        self.assertEqual(client.max_active_calls, 2)
+
+    def test_duplicate_answers_for_one_session_are_serialized(self) -> None:
+        started = self.service.start(token="token-a", position="Java 后端工程师")
+        response = json.dumps(
+            {
+                "feedback": "回答说明了定位步骤，建议继续补充验证指标和回滚方案。",
+                "needs_follow_up": False,
+                "next_question": "请说明你会如何保证消息消费的幂等性？",
+            },
+            ensure_ascii=False,
+        )
+        client = ConcurrentAnswerChatClient(response)
+        self.service.chat_client = client
+
+        def submit() -> object:
+            try:
+                return self.service.submit_answer(
+                    token="token-a",
+                    session_id=started.session_id,
+                    answer="我会先收集指标，再定位根因并验证修复效果。",
+                    expected_question=started.question,
+                )
+            except InterviewValidationError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: submit(), range(2)))
+
+        failures = [item for item in results if isinstance(item, Exception)]
+        self.assertEqual(len(failures), 1)
+        self.assertIsInstance(failures[0], InterviewValidationError)
+        self.assertEqual(client.max_active_calls, 1)
 
     def test_follow_ups_stay_on_round_and_fourth_answer_forces_next_main(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")

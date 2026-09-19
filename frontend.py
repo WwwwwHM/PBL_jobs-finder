@@ -1344,7 +1344,7 @@ def build_app() -> gr.Blocks:
                 interview_question_state,
             ],
             trigger_mode="once",
-            concurrency_limit=1,
+            concurrency_limit=4,
             concurrency_id="interview-start",
             api_name=False,
         ).then(
@@ -1376,7 +1376,7 @@ def build_app() -> gr.Blocks:
                 interview_status,
             ],
             trigger_mode="once",
-            concurrency_limit=1,
+            concurrency_limit=4,
             concurrency_id="interview-answer",
             api_name=False,
         ).then(
@@ -1412,7 +1412,7 @@ def build_app() -> gr.Blocks:
             api_name=False,
         )
 
-    return app
+    return app.queue(max_size=100, default_concurrency_limit=4)
 
 
 if __name__ == "__main__":

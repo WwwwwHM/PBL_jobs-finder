@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from pbl_jobs_finder.models.database import Database
 from pbl_jobs_finder.models.repositories import (
@@ -41,6 +42,36 @@ class BackendInitializationTests(unittest.TestCase):
         self.assertEqual(
             table_names, {"users", "resume_records", "interview_sessions"}
         )
+
+    def test_sqlite_uses_wal_and_waits_for_concurrent_writers(self) -> None:
+        with self.database.session() as session:
+            journal_mode = session.execute(text("PRAGMA journal_mode")).scalar_one()
+            busy_timeout = session.execute(text("PRAGMA busy_timeout")).scalar_one()
+        self.assertEqual(journal_mode.lower(), "wal")
+        self.assertEqual(busy_timeout, 30_000)
+
+    def test_concurrent_first_writes_create_one_user_without_conflicts(self) -> None:
+        phone = "13700137000"
+
+        def create_record(index: int) -> None:
+            with self.database.session() as session:
+                create_resume_record(
+                    session,
+                    phone=phone,
+                    original_text=f"resume {index}",
+                    target_position="后端工程师",
+                    score=80,
+                    missing_keywords=[],
+                    suggestions="补充量化结果",
+                    optimized_text="优化稿",
+                )
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            list(executor.map(create_record, range(20)))
+
+        with self.database.session() as session:
+            self.assertIsNotNone(get_user(session, phone))
+            self.assertEqual(len(get_recent_resume_records(session, phone, limit=30)), 20)
 
     def test_user_crud_and_cascade_delete(self) -> None:
         with self.database.session() as session:

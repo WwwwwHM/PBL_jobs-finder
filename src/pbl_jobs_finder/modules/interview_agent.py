@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import RLock
 
@@ -208,6 +209,12 @@ class _AnswerDecision:
     next_question: str
 
 
+@dataclass(slots=True)
+class _AnswerLockEntry:
+    lock: object
+    users: int = 0
+
+
 def generate_first_question(
     *,
     position: str,
@@ -252,7 +259,8 @@ class InterviewService:
         self.vector_store = vector_store
         self.chat_client = chat_client
         self.token_verifier = token_verifier
-        self._answer_lock = RLock()
+        self._answer_locks: dict[int, _AnswerLockEntry] = {}
+        self._answer_locks_guard = RLock()
 
     def start(
         self,
@@ -329,7 +337,7 @@ class InterviewService:
         normalized_answer = _validate_answer(answer)
         normalized_expected_question = _validate_expected_question(expected_question)
 
-        with self._answer_lock:
+        with self._answer_lock_for(normalized_session_id):
             snapshot = self._load_answer_snapshot(
                 normalized_session_id,
                 user["phone"],
@@ -385,6 +393,27 @@ class InterviewService:
                 report=report,
             )
         return outcome
+
+    @contextmanager
+    def _answer_lock_for(self, session_id: int) -> Generator[None, None, None]:
+        """Serialize one interview without blocking unrelated sessions."""
+
+        with self._answer_locks_guard:
+            entry = self._answer_locks.get(session_id)
+            if entry is None:
+                entry = _AnswerLockEntry(lock=RLock())
+                self._answer_locks[session_id] = entry
+            entry.users += 1
+
+        entry.lock.acquire()
+        try:
+            yield
+        finally:
+            entry.lock.release()
+            with self._answer_locks_guard:
+                entry.users -= 1
+                if entry.users == 0:
+                    self._answer_locks.pop(session_id, None)
 
     def _load_answer_snapshot(
         self, session_id: int, phone: str, expected_question: str

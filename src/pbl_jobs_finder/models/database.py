@@ -18,7 +18,11 @@ class Database:
     def __init__(self, url: str | None = None) -> None:
         settings = get_settings()
         self.url = url or settings.database_url
-        connect_args = {"check_same_thread": False} if self.url.startswith("sqlite") else {}
+        connect_args = (
+            {"check_same_thread": False, "timeout": 30}
+            if self.url.startswith("sqlite")
+            else {}
+        )
         self.engine: Engine = create_engine(self.url, connect_args=connect_args)
         if self.url.startswith("sqlite"):
             event.listen(self.engine, "connect", self._enable_sqlite_foreign_keys)
@@ -33,6 +37,8 @@ class Database:
     def _enable_sqlite_foreign_keys(dbapi_connection: object, _: object) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA journal_mode=WAL")
         cursor.close()
 
     def initialize(self) -> None:

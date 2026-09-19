@@ -125,6 +125,19 @@ class FrontendAuthTests(unittest.TestCase):
             }
             <= callbacks
         )
+        self.assertEqual(app._queue.max_size, 100)
+        self.assertEqual(app._queue.default_concurrency_limit, 4)
+        limits = {
+            fn.fn: fn.concurrency_limit
+            for fn in app.fns.values()
+            if fn.fn
+            in {
+                frontend.start_interview_callback,
+                frontend.submit_interview_answer_callback,
+            }
+        }
+        self.assertEqual(limits[frontend.start_interview_callback], 4)
+        self.assertEqual(limits[frontend.submit_interview_answer_callback], 4)
 
     def test_history_callback_formats_recent_summaries(self) -> None:
         snapshot = HistorySnapshot(

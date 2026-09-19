@@ -52,13 +52,13 @@ SYSTEM_PROMPT = """你是一位资深招聘经理和简历优化师。请分析�
 JSON 必须包含：
 {
   "score": 0到100的整数,
-  "missing_keywords": ["关键词"],
-  "suggestions": ["具体且可执行的建议"],
-  "star_examples": ["严格基于原简历事实的STAR改写示例"],
+  "missing_keywords": ["关键词，最多6项"],
+  "suggestions": ["具体且可执行的建议，最多3项，每项一句话"],
+  "star_examples": ["严格基于原简历事实、最有价值的1个STAR改写示例"],
   "optimized_text": "Markdown 格式的完整优化简历"
 }
 
-STAR示例必须说明情境/任务、行动和结果；原文缺少结果数字时使用“[请补充真实数据]”，不得自行补造。优化稿使用简单 Markdown：第一行为“# 姓名”（姓名未知则为“# 个人简历”），分区使用“## 标题”，经历要点使用“- 内容”。不要使用表格、代码块、横线或诊断说明。"""
+各列表合并重复或近义内容，保持精炼。STAR示例必须说明情境/任务、行动和结果；原文缺少结果数字时使用“[请补充真实数据]”，不得自行补造。优化稿使用简单 Markdown：第一行为“# 姓名”（姓名未知则为“# 个人简历”），分区使用“## 标题”，经历要点使用“- 内容”，每段经历合并同义内容并优先保留3个最相关要点。不要使用表格、代码块、横线或诊断说明。"""
 
 USER_PROMPT = """【目标岗位】
 {position}
@@ -69,6 +69,7 @@ USER_PROMPT = """【目标岗位】
 请评估岗位匹配度，指出缺失关键词和修改建议，给出至少一个STAR改写示例，并在不改变事实的前提下给出完整优化稿。只输出 JSON。"""
 
 MAX_SUPPLEMENTAL_CHARACTERS = 6000
+DIAGNOSIS_MAX_TOKENS = 3072
 
 GENERATION_SYSTEM_PROMPT = """你是一位专业的简历优化师。请将候选人的材料整合为一份结构化新版简历。
 
@@ -137,7 +138,7 @@ def diagnose_resume(
     """Ask the model for a validated diagnosis and complete optimized resume."""
 
     normalized_text, normalized_position = _validate_inputs(resume_text, position)
-    chat_client = client or create_default_chat_client()
+    chat_client = client or create_default_chat_client(max_tokens=DIAGNOSIS_MAX_TOKENS)
     raw_response = chat_client.complete(
         SYSTEM_PROMPT,
         USER_PROMPT.format(
