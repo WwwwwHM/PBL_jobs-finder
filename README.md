@@ -30,6 +30,9 @@ Copy-Item .env.example .env
 
 `.env` 包含本地密钥，不会被 Git 提交。
 
+候选版本的完整安装、初始化、预检、启动、冒烟和回滚步骤见
+[`部署说明.md`](部署说明.md)。
+
 首次使用新版 PDF 简历生成时，需要安装 Playwright 的 Chromium 运行时：
 
 ```powershell
@@ -101,6 +104,14 @@ python frontend.py
 ```
 
 默认访问地址为 `http://127.0.0.1:7860`。
+
+候选版本启动前可执行统一部署预检。`--release` 会额外要求两项 API Key、
+42 条已初始化面试题、Playwright Chromium 和可正常构建的 Gradio 页面：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\.playwright-browsers"
+python scripts/check_deployment.py --release
+```
 
 ## 错误日志与调试
 

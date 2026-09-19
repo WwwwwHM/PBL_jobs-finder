@@ -22,6 +22,7 @@ data/chroma_db/
 data/exports/
 .playwright-browsers/
 .uv-cache/
+tmp/
 
 # Editors and operating systems
 .idea/

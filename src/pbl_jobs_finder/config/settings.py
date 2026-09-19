@@ -35,6 +35,13 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _configured_path(name: str, default: Path) -> Path:
+    """Resolve an optional path setting, treating blank dotenv values as unset."""
+
+    configured = os.getenv(name, "").strip()
+    return Path(configured or default).resolve()
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Resolved settings used by backend modules."""
@@ -76,13 +83,11 @@ class Settings:
 def get_settings() -> Settings:
     """Load and cache settings from the process environment."""
 
-    data_dir = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data")).resolve()
-    uploads_dir = Path(os.getenv("UPLOADS_DIR", data_dir / "uploads")).resolve()
-    configured_exports_dir = os.getenv("EXPORTS_DIR", "").strip()
-    exports_dir = Path(configured_exports_dir or (data_dir / "exports")).resolve()
-    chroma_dir = Path(os.getenv("CHROMA_DIR", data_dir / "chroma_db")).resolve()
-    configured_log_dir = os.getenv("LOG_DIR", "").strip()
-    log_dir = Path(configured_log_dir or (data_dir / "logs")).resolve()
+    data_dir = _configured_path("DATA_DIR", PROJECT_ROOT / "data")
+    uploads_dir = _configured_path("UPLOADS_DIR", data_dir / "uploads")
+    exports_dir = _configured_path("EXPORTS_DIR", data_dir / "exports")
+    chroma_dir = _configured_path("CHROMA_DIR", data_dir / "chroma_db")
+    log_dir = _configured_path("LOG_DIR", data_dir / "logs")
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
     if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
         raise ValueError(
