@@ -19,6 +19,7 @@ from pbl_jobs_finder.models.repositories import (
 )
 from pbl_jobs_finder.modules.quota import QuotaService
 from pbl_jobs_finder.modules.resume_diagnosis import (
+    DIAGNOSIS_MAX_TOKENS,
     MAX_SUPPLEMENTAL_CHARACTERS,
     ResumeAccessError,
     ResumeDiagnosisService,
@@ -186,6 +187,20 @@ def _fake_pdf_renderer(_: str, destination: Path) -> None:
 
 
 class ResumeDiagnosisTests(unittest.TestCase):
+    def test_diagnosis_uses_the_bounded_release_output_budget(self) -> None:
+        client = FakeChatClient(_model_response())
+        with patch(
+            "pbl_jobs_finder.modules.resume_diagnosis.create_default_chat_client",
+            return_value=client,
+        ) as factory:
+            diagnose_resume(
+                "张三，五年 Python 后端经验，负责订单服务开发和维护。",
+                "Python 后端工程师",
+            )
+
+        factory.assert_called_once_with(max_tokens=DIAGNOSIS_MAX_TOKENS)
+        self.assertEqual(DIAGNOSIS_MAX_TOKENS, 3072)
+
     def test_diagnosis_parses_json_and_requires_truthful_complete_rewrite(self) -> None:
         client = FakeChatClient(f"```json\n{_model_response()}\n```")
         result = diagnose_resume(
