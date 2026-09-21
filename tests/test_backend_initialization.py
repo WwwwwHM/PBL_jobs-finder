@@ -40,7 +40,8 @@ class BackendInitializationTests(unittest.TestCase):
         self.database.initialize()
         table_names = set(inspect(self.database.engine).get_table_names())
         self.assertEqual(
-            table_names, {"users", "resume_records", "interview_sessions"}
+            table_names,
+            {"users", "resume_records", "interview_sessions", "schema_migrations"},
         )
 
     def test_sqlite_uses_wal_and_waits_for_concurrent_writers(self) -> None:

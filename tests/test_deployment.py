@@ -53,7 +53,7 @@ class DeploymentPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings = _settings(Path(temp_dir))
             self.assertIn("writable", check_runtime_directories(settings))
-            self.assertIn("3 required tables", check_database(settings))
+            self.assertIn("4 required tables", check_database(settings))
 
             from sqlalchemy import create_engine
 

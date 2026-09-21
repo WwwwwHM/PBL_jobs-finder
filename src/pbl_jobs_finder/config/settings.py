@@ -35,6 +35,18 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _boolean(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
 def _configured_path(name: str, default: Path) -> Path:
     """Resolve an optional path setting, treating blank dotenv values as unset."""
 
@@ -68,6 +80,11 @@ class Settings:
     embedding_dimensions: int
     embedding_timeout_seconds: float
     embedding_max_retries: int
+    resume_policy_version: str = "legacy-v1"
+    interview_policy_version: str = "interview-standard-v1"
+    enable_resume_dimensions: bool = False
+    enable_resume_templates: bool = False
+    enable_interview_modes: bool = False
 
     def ensure_runtime_directories(self) -> None:
         """Create directories used for local persistent data."""
@@ -126,4 +143,14 @@ def get_settings() -> Settings:
             "EMBEDDING_TIMEOUT_SECONDS", 30.0
         ),
         embedding_max_retries=_positive_int("EMBEDDING_MAX_RETRIES", 2),
+        resume_policy_version=(
+            os.getenv("RESUME_POLICY_VERSION", "legacy-v1").strip() or "legacy-v1"
+        ),
+        interview_policy_version=(
+            os.getenv("INTERVIEW_POLICY_VERSION", "interview-standard-v1").strip()
+            or "interview-standard-v1"
+        ),
+        enable_resume_dimensions=_boolean("ENABLE_RESUME_DIMENSIONS"),
+        enable_resume_templates=_boolean("ENABLE_RESUME_TEMPLATES"),
+        enable_interview_modes=_boolean("ENABLE_INTERVIEW_MODES"),
     )

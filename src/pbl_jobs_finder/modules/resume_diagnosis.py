@@ -38,6 +38,12 @@ from pbl_jobs_finder.modules.resume_pdf import (
     parse_resume_document,
     prepare_photo_data_uri,
 )
+from pbl_jobs_finder.policies.resume_policy import (
+    RESUME_GENERAL_POLICY_VERSION,
+    ResumeDimensions,
+    ResumePolicyError,
+    get_resume_policy,
+)
 from pbl_jobs_finder.utils.llm_client import ChatClient, create_default_chat_client
 
 SYSTEM_PROMPT = """你是一位资深招聘经理和简历优化师。请分析候选人的原始简历与目标岗位，输出严格 JSON。
@@ -70,6 +76,7 @@ USER_PROMPT = """【目标岗位】
 
 MAX_SUPPLEMENTAL_CHARACTERS = 6000
 DIAGNOSIS_MAX_TOKENS = 3072
+DIMENSIONAL_DIAGNOSIS_MAX_TOKENS = 4096
 
 GENERATION_SYSTEM_PROMPT = """你是一位专业的简历优化师。请将候选人的材料整合为一份结构化新版简历。
 
@@ -114,6 +121,11 @@ class ResumeDiagnosis:
     suggestions: str
     star_examples: str
     optimized_text: str
+    grade: str = ""
+    dimensions: ResumeDimensions | None = None
+    strengths: tuple[str, ...] = ()
+    confidence: str = ""
+    policy_version: str = "legacy-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,10 +146,19 @@ def diagnose_resume(
     position: str,
     *,
     client: ChatClient | None = None,
+    enable_dimensions: bool = False,
+    policy_version: str = RESUME_GENERAL_POLICY_VERSION,
 ) -> ResumeDiagnosis:
     """Ask the model for a validated diagnosis and complete optimized resume."""
 
     normalized_text, normalized_position = _validate_inputs(resume_text, position)
+    if enable_dimensions:
+        return _diagnose_resume_with_policy(
+            normalized_text,
+            normalized_position,
+            client=client,
+            policy_version=policy_version,
+        )
     chat_client = client or create_default_chat_client(max_tokens=DIAGNOSIS_MAX_TOKENS)
     raw_response = chat_client.complete(
         SYSTEM_PROMPT,
@@ -211,13 +232,27 @@ class ResumeDiagnosisService:
         chat_client: ChatClient | None = None,
         exports_dir: str | Path | None = None,
         pdf_renderer: PDFRenderer | None = None,
+        enable_dimensions: bool | None = None,
+        resume_policy_version: str | None = None,
     ) -> None:
+        settings = get_settings()
         self.database = database_instance or database
         self.quota = quota or quota_service
         self.token_verifier = token_verifier
         self.chat_client = chat_client
-        self.exports_dir = Path(exports_dir or get_settings().exports_dir)
+        self.exports_dir = Path(exports_dir or settings.exports_dir)
         self.pdf_renderer = pdf_renderer
+        self.enable_dimensions = (
+            settings.enable_resume_dimensions
+            if enable_dimensions is None
+            else enable_dimensions
+        )
+        configured_policy = resume_policy_version or settings.resume_policy_version
+        self.resume_policy_version = (
+            RESUME_GENERAL_POLICY_VERSION
+            if configured_policy == "legacy-v1" and self.enable_dimensions
+            else configured_policy
+        )
 
     def diagnose(
         self,
@@ -236,6 +271,8 @@ class ResumeDiagnosisService:
                 resume_text,
                 position,
                 client=self.chat_client,
+                enable_dimensions=self.enable_dimensions,
+                policy_version=self.resume_policy_version,
             )
             self.database.initialize()
             with self.database.session() as session:
@@ -248,6 +285,9 @@ class ResumeDiagnosisService:
                     missing_keywords=diagnosis.missing_keywords,
                     suggestions=_stored_suggestions(diagnosis),
                     optimized_text=diagnosis.optimized_text,
+                    policy_version=diagnosis.policy_version,
+                    grade=diagnosis.grade,
+                    diagnosis=_diagnosis_metadata(diagnosis),
                 )
                 record_id = record.id
         return DiagnosisOutcome(record_id=record_id, diagnosis=diagnosis)
@@ -499,6 +539,44 @@ def _parse_diagnosis(raw_response: str) -> ResumeDiagnosis:
     )
 
 
+def _diagnose_resume_with_policy(
+    resume_text: str,
+    position: str,
+    *,
+    client: ChatClient | None,
+    policy_version: str,
+) -> ResumeDiagnosis:
+    try:
+        policy = get_resume_policy(policy_version)
+        system_prompt, user_prompt = policy.build_prompts(
+            resume_text=resume_text,
+            position=position,
+        )
+    except ResumePolicyError as exc:
+        raise ResumeValidationError(str(exc)) from exc
+    chat_client = client or create_default_chat_client(
+        max_tokens=DIMENSIONAL_DIAGNOSIS_MAX_TOKENS
+    )
+    raw_response = chat_client.complete(system_prompt, user_prompt)
+    try:
+        payload = policy.parse_response(raw_response)
+    except ResumePolicyError as exc:
+        raise ResumeResponseError(str(exc)) from exc
+    score = policy.calculate_score(payload.dimensions)
+    return ResumeDiagnosis(
+        score=score,
+        missing_keywords=list(payload.missing_keywords),
+        suggestions=_normalize_markdown_list(payload.suggestions),
+        star_examples=_normalize_markdown_list(payload.star_examples),
+        optimized_text=payload.optimized_text,
+        grade=policy.grade_for(score),
+        dimensions=payload.dimensions,
+        strengths=tuple(payload.strengths),
+        confidence=payload.confidence,
+        policy_version=policy.version,
+    )
+
+
 def _normalize_markdown_list(value: object) -> str:
     if isinstance(value, list):
         return "\n".join(
@@ -513,7 +591,21 @@ def _stored_suggestions(diagnosis: ResumeDiagnosis) -> str:
     return f"{diagnosis.suggestions}\n\n### STAR 改写示例\n{diagnosis.star_examples}"
 
 
+def _diagnosis_metadata(diagnosis: ResumeDiagnosis) -> dict[str, object]:
+    if diagnosis.dimensions is None:
+        return {}
+    return {
+        "policy_version": diagnosis.policy_version,
+        "grade": diagnosis.grade,
+        "dimensions": diagnosis.dimensions.model_dump(mode="json"),
+        "strengths": list(diagnosis.strengths),
+        "confidence": diagnosis.confidence,
+    }
+
+
 __all__ = [
+    "DIAGNOSIS_MAX_TOKENS",
+    "DIMENSIONAL_DIAGNOSIS_MAX_TOKENS",
     "MAX_SUPPLEMENTAL_CHARACTERS",
     "DiagnosisOutcome",
     "GeneratedResumeOutcome",

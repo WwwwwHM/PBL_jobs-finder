@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from threading import RLock
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from pbl_jobs_finder.config import get_settings
@@ -32,6 +33,7 @@ class Database:
             expire_on_commit=False,
             class_=Session,
         )
+        self._initialize_lock = RLock()
 
     @staticmethod
     def _enable_sqlite_foreign_keys(dbapi_connection: object, _: object) -> None:
@@ -42,11 +44,65 @@ class Database:
         cursor.close()
 
     def initialize(self) -> None:
-        """Create runtime directories and all missing tables safely."""
+        """Create tables and apply idempotent SQLite compatibility migrations."""
 
-        if self.url == get_settings().database_url:
-            get_settings().ensure_runtime_directories()
-        Base.metadata.create_all(self.engine)
+        with self._initialize_lock:
+            if self.url == get_settings().database_url:
+                get_settings().ensure_runtime_directories()
+            Base.metadata.create_all(self.engine)
+            if self.url.startswith("sqlite"):
+                self._apply_sqlite_migrations()
+
+    def _apply_sqlite_migrations(self) -> None:
+        migration_version = "2026-09-21-m1-policy-metadata"
+        required_columns = {
+            "resume_records": {
+                "policy_version": (
+                    "policy_version VARCHAR(64) NOT NULL DEFAULT 'legacy-v1'"
+                ),
+                "grade": "grade VARCHAR(8) NOT NULL DEFAULT ''",
+                "diagnosis_json": "diagnosis_json TEXT NOT NULL DEFAULT '{}'",
+                "template_id": (
+                    "template_id VARCHAR(64) NOT NULL DEFAULT 'classic'"
+                ),
+            },
+            "interview_sessions": {
+                "mode": "mode VARCHAR(32) NOT NULL DEFAULT 'standard_live'",
+                "feedback_mode": (
+                    "feedback_mode VARCHAR(16) NOT NULL DEFAULT 'live'"
+                ),
+                "policy_version": (
+                    "policy_version VARCHAR(64) NOT NULL "
+                    "DEFAULT 'interview-standard-v1'"
+                ),
+                "question_plan_json": (
+                    "question_plan_json TEXT NOT NULL DEFAULT '[]'"
+                ),
+            },
+        }
+        with self.engine.begin() as connection:
+            inspector = inspect(connection)
+            table_names = set(inspector.get_table_names())
+            for table_name, columns in required_columns.items():
+                if table_name not in table_names:
+                    continue
+                existing = {
+                    column["name"] for column in inspector.get_columns(table_name)
+                }
+                for column_name, definition in columns.items():
+                    if column_name in existing:
+                        continue
+                    connection.execute(
+                        text(f"ALTER TABLE {table_name} ADD COLUMN {definition}")
+                    )
+                    existing.add(column_name)
+            connection.execute(
+                text(
+                    "INSERT OR IGNORE INTO schema_migrations (version) "
+                    "VALUES (:version)"
+                ),
+                {"version": migration_version},
+            )
 
     @contextmanager
     def session(self) -> Generator[Session, None, None]:

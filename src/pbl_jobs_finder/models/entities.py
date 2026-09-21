@@ -57,6 +57,18 @@ class ResumeRecord(TimestampMixin, Base):
     missing_keywords_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     suggestions: Mapped[str] = mapped_column(Text, nullable=False)
     optimized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_version: Mapped[str] = mapped_column(
+        String(64), default="legacy-v1", server_default="legacy-v1", nullable=False
+    )
+    grade: Mapped[str] = mapped_column(
+        String(8), default="", server_default="", nullable=False
+    )
+    diagnosis_json: Mapped[str] = mapped_column(
+        Text, default="{}", server_default="{}", nullable=False
+    )
+    template_id: Mapped[str] = mapped_column(
+        String(64), default="classic", server_default="classic", nullable=False
+    )
 
     user: Mapped[User] = relationship(back_populates="resume_records")
 
@@ -80,5 +92,31 @@ class InterviewSession(TimestampMixin, Base):
     follow_up_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     conversation_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     report: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    mode: Mapped[str] = mapped_column(
+        String(32), default="standard_live", server_default="standard_live", nullable=False
+    )
+    feedback_mode: Mapped[str] = mapped_column(
+        String(16), default="live", server_default="live", nullable=False
+    )
+    policy_version: Mapped[str] = mapped_column(
+        String(64),
+        default="interview-standard-v1",
+        server_default="interview-standard-v1",
+        nullable=False,
+    )
+    question_plan_json: Mapped[str] = mapped_column(
+        Text, default="[]", server_default="[]", nullable=False
+    )
 
     user: Mapped[User] = relationship(back_populates="interview_sessions")
+
+
+class SchemaMigration(Base):
+    """One successfully applied application schema migration."""
+
+    __tablename__ = "schema_migrations"
+
+    version: Mapped[str] = mapped_column(String(100), primary_key=True)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.current_timestamp(), nullable=False
+    )

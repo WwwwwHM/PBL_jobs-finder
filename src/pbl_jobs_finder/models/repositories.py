@@ -53,6 +53,10 @@ def create_resume_record(
     missing_keywords: list[str],
     suggestions: str,
     optimized_text: str,
+    policy_version: str = "legacy-v1",
+    grade: str = "",
+    diagnosis: dict[str, Any] | None = None,
+    template_id: str = "classic",
 ) -> ResumeRecord:
     get_or_create_user(session, phone)
     record = ResumeRecord(
@@ -63,6 +67,10 @@ def create_resume_record(
         missing_keywords_json=json.dumps(missing_keywords, ensure_ascii=False),
         suggestions=suggestions,
         optimized_text=optimized_text,
+        policy_version=policy_version,
+        grade=grade,
+        diagnosis_json=json.dumps(diagnosis or {}, ensure_ascii=False),
+        template_id=template_id,
     )
     session.add(record)
     session.flush()
@@ -75,6 +83,10 @@ def update_resume_record(session: Session, record_id: int, **changes: Any) -> Re
         changes["missing_keywords_json"] = json.dumps(
             changes.pop("missing_keywords"), ensure_ascii=False
         )
+    if "diagnosis" in changes:
+        changes["diagnosis_json"] = json.dumps(
+            changes.pop("diagnosis"), ensure_ascii=False
+        )
     allowed = {
         "original_text",
         "target_position",
@@ -82,6 +94,10 @@ def update_resume_record(session: Session, record_id: int, **changes: Any) -> Re
         "missing_keywords_json",
         "suggestions",
         "optimized_text",
+        "policy_version",
+        "grade",
+        "diagnosis_json",
+        "template_id",
     }
     _apply_changes(record, changes, allowed)
     session.flush()
@@ -115,6 +131,10 @@ def create_interview_session(
     position: str,
     job_description: str = "",
     resume_text: str = "",
+    mode: str = "standard_live",
+    feedback_mode: str = "live",
+    policy_version: str = "interview-standard-v1",
+    question_plan: list[dict[str, Any]] | None = None,
 ) -> InterviewSession:
     get_or_create_user(session, phone)
     interview = InterviewSession(
@@ -122,6 +142,10 @@ def create_interview_session(
         position=position,
         job_description=job_description,
         resume_text=resume_text,
+        mode=mode,
+        feedback_mode=feedback_mode,
+        policy_version=policy_version,
+        question_plan_json=json.dumps(question_plan or [], ensure_ascii=False),
     )
     session.add(interview)
     session.flush()
@@ -136,6 +160,10 @@ def update_interview_session(
         changes["conversation_json"] = json.dumps(
             changes.pop("conversation"), ensure_ascii=False
         )
+    if "question_plan" in changes:
+        changes["question_plan_json"] = json.dumps(
+            changes.pop("question_plan"), ensure_ascii=False
+        )
     allowed = {
         "position",
         "job_description",
@@ -146,6 +174,10 @@ def update_interview_session(
         "follow_up_count",
         "conversation_json",
         "report",
+        "mode",
+        "feedback_mode",
+        "policy_version",
+        "question_plan_json",
     }
     _apply_changes(interview, changes, allowed)
     session.flush()

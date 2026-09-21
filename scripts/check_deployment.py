@@ -22,7 +22,12 @@ from pbl_jobs_finder.modules.question_bank import (
 )
 from pbl_jobs_finder.vector_store import COLLECTION_NAME
 
-EXPECTED_TABLES = {"users", "resume_records", "interview_sessions"}
+EXPECTED_TABLES = {
+    "users",
+    "resume_records",
+    "interview_sessions",
+    "schema_migrations",
+}
 EXPECTED_QUESTION_COUNT = 42
 
 

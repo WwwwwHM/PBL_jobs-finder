@@ -31,6 +31,15 @@ Copy-Item .env.example .env
 
 `.env` 包含本地密钥，不会被 Git 提交。
 
+M1 已加入版本化简历诊断策略，但默认保持原有单分数流程。开发或测试环境可显式启用六维诊断：
+
+```dotenv
+RESUME_POLICY_VERSION=resume-general-v1
+ENABLE_RESUME_DIMENSIONS=True
+```
+
+六维模式会分别校验硬技能、经验相关度、软性能力、教育背景、关键词覆盖和简历质量，最终总分由服务端按本地策略计算。外部 skill 仅作为产品方法参考，不在运行时下载或执行；来源登记见 `docs/skill_adoption.md`。
+
 候选版本的完整安装、初始化、预检、启动、冒烟和回滚步骤见
 [`部署说明.md`](部署说明.md)。
 

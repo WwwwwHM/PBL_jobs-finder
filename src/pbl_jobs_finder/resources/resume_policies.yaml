@@ -1,0 +1,29 @@
+policies:
+  resume-general-v1:
+    version: resume-general-v1
+    label: 通用岗位六维简历诊断
+    dimensions:
+      hard_skill_match:
+        label: 硬技能匹配度
+        weight: 0.25
+        rubric: 区分岗位必需技能与加分技能，只认可简历中有事实证据的技能。
+      experience_relevance:
+        label: 工作经验相关度
+        weight: 0.25
+        rubric: 评估职责、项目和成果与目标岗位的直接或可迁移关联，近期经历优先。
+      soft_skill_match:
+        label: 软性能力匹配度
+        weight: 0.15
+        rubric: 只认可协作、沟通、领导或问题解决的具体行为证据，不认可自我评价式罗列。
+      education_match:
+        label: 教育背景匹配度
+        weight: 0.10
+        rubric: 依据岗位明确门槛评估学历、专业和证书；岗位未要求时保持中性，不按学校名气评分。
+      keyword_coverage:
+        label: 关键词覆盖率
+        weight: 0.15
+        rubric: 比较岗位核心术语及合理同义词；关键词堆砌和无经历支撑的罗列不得提高评分。
+      resume_quality:
+        label: 简历质量
+        weight: 0.10
+        rubric: 评估结构、重点、行动与结果表达、可读性和重复内容，不把特定地区版式偏好当作通用硬门槛。
