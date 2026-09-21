@@ -36,3 +36,11 @@ does not make an external repository a runtime dependency.
 local YAML definitions, a strict Pydantic response contract, and server-side
 weighted score calculation. The feature remains disabled by default until the
 new path passes product validation.
+
+## M2 Resume Templates
+
+M2 adds three independently implemented local templates: `classic`, `compact`,
+and `technical`. Templates only style validated and escaped resume fields; they
+are never accepted from model output or loaded from an external repository.
+Selection is feature-flagged, validated before model generation, and persisted
+only after a PDF is rendered successfully.

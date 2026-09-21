@@ -24,6 +24,10 @@ from pbl_jobs_finder.modules.resume_pdf import (
     prepare_photo_data_uri,
     render_resume_html,
 )
+from pbl_jobs_finder.modules.resume_templates import (
+    RESUME_TEMPLATE_CHOICES,
+    get_resume_template,
+)
 
 
 def _document_payload() -> dict:
@@ -108,6 +112,29 @@ class ResumeDocumentTests(unittest.TestCase):
         self.assertIn('<span class="contact-label">所在地：</span>', html)
         self.assertIn('<span class="contact-label">个人主页：</span>', html)
         self.assertNotIn("13800138000</a><a", html)
+
+    def test_reviewed_templates_render_distinct_safe_layouts(self) -> None:
+        document = parse_resume_document(
+            json.dumps(_document_payload(), ensure_ascii=False)
+        )
+        template_ids = [template_id for _, template_id in RESUME_TEMPLATE_CHOICES]
+
+        self.assertEqual(template_ids, ["classic", "compact", "technical"])
+        rendered = {
+            template_id: render_resume_html(document, template_id=template_id)
+            for template_id in template_ids
+        }
+
+        for template_id, html in rendered.items():
+            self.assertIn(f'data-template="{template_id}"', html)
+            self.assertIn("张三", html)
+            self.assertNotIn("http://fonts", html)
+        self.assertNotEqual(rendered["classic"], rendered["compact"])
+        self.assertNotEqual(rendered["compact"], rendered["technical"])
+        with self.assertRaisesRegex(ResumePDFError, "未知的简历模板"):
+            render_resume_html(document, template_id="external-template")
+        with self.assertRaisesRegex(ValueError, "未知的简历模板"):
+            get_resume_template("external-template")
 
     def test_photo_upload_is_embedded_and_invalid_content_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

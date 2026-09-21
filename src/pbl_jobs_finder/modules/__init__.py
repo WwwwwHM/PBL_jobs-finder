@@ -52,8 +52,16 @@ from pbl_jobs_finder.modules.resume_pdf import (
     create_resume_pdf,
     render_resume_html,
 )
+from pbl_jobs_finder.modules.resume_templates import (
+    DEFAULT_RESUME_TEMPLATE_ID,
+    RESUME_TEMPLATE_CHOICES,
+    ResumeTemplate,
+    get_resume_template,
+)
 
 __all__ = [
+    "DEFAULT_RESUME_TEMPLATE_ID",
+    "RESUME_TEMPLATE_CHOICES",
     "AuthService",
     "AuthenticationError",
     "DiagnosisOutcome",
@@ -78,12 +86,14 @@ __all__ = [
     "ResumeHistoryItem",
     "ResumeOCRError",
     "ResumePDFError",
+    "ResumeTemplate",
     "create_resume_pdf",
     "diagnose_resume",
     "extract_text_from_image_pdf",
     "generate_first_question",
     "generate_interview_report",
     "generate_resume_with_supplement",
+    "get_resume_template",
     "history_service",
     "optimize_resume",
     "quota_service",

@@ -38,6 +38,10 @@ from pbl_jobs_finder.modules.resume_pdf import (
     parse_resume_document,
     prepare_photo_data_uri,
 )
+from pbl_jobs_finder.modules.resume_templates import (
+    DEFAULT_RESUME_TEMPLATE_ID,
+    get_resume_template,
+)
 from pbl_jobs_finder.policies.resume_policy import (
     RESUME_GENERAL_POLICY_VERSION,
     ResumeDimensions,
@@ -139,6 +143,7 @@ class GeneratedResumeOutcome:
     record_id: int
     document: ResumeDocument
     pdf_path: Path
+    template_id: str = DEFAULT_RESUME_TEMPLATE_ID
 
 
 def diagnose_resume(
@@ -233,6 +238,7 @@ class ResumeDiagnosisService:
         exports_dir: str | Path | None = None,
         pdf_renderer: PDFRenderer | None = None,
         enable_dimensions: bool | None = None,
+        enable_templates: bool | None = None,
         resume_policy_version: str | None = None,
     ) -> None:
         settings = get_settings()
@@ -246,6 +252,11 @@ class ResumeDiagnosisService:
             settings.enable_resume_dimensions
             if enable_dimensions is None
             else enable_dimensions
+        )
+        self.enable_templates = (
+            settings.enable_resume_templates
+            if enable_templates is None
+            else enable_templates
         )
         configured_policy = resume_policy_version or settings.resume_policy_version
         self.resume_policy_version = (
@@ -300,6 +311,7 @@ class ResumeDiagnosisService:
         optimized_text: str,
         supplemental_experience: str = "",
         photo_file: str | Path | None = None,
+        template_id: str = DEFAULT_RESUME_TEMPLATE_ID,
     ) -> GeneratedResumeOutcome:
         """Generate and persist a structured resume and its PDF without using quota."""
 
@@ -308,6 +320,7 @@ class ResumeDiagnosisService:
         )
         supplement = _validate_supplemental_experience(supplemental_experience)
         current = _validate_optimized_text(optimized_text)
+        selected_template = self._resolve_template_id(template_id)
         photo_data_uri = prepare_photo_data_uri(photo_file)
 
         self.database.initialize()
@@ -331,6 +344,7 @@ class ResumeDiagnosisService:
             record_id=normalized_record_id,
             renderer=self.pdf_renderer,
             photo_data_uri=photo_data_uri,
+            template_id=selected_template,
         )
         serialized_document = document.model_dump_json(exclude_none=True)
 
@@ -342,6 +356,7 @@ class ResumeDiagnosisService:
                     session,
                     normalized_record_id,
                     optimized_text=serialized_document,
+                    template_id=selected_template,
                 )
         except Exception:
             destination.unlink(missing_ok=True)
@@ -351,7 +366,17 @@ class ResumeDiagnosisService:
             record_id=normalized_record_id,
             document=document,
             pdf_path=destination,
+            template_id=selected_template,
         )
+
+    def _resolve_template_id(self, template_id: str) -> str:
+        normalized = (template_id or DEFAULT_RESUME_TEMPLATE_ID).strip()
+        if not self.enable_templates and normalized != DEFAULT_RESUME_TEMPLATE_ID:
+            raise ResumeValidationError("简历模板功能尚未启用")
+        try:
+            return get_resume_template(normalized).id
+        except ValueError as exc:
+            raise ResumeValidationError(str(exc)) from exc
 
     def export_optimized_resume(
         self,

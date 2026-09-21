@@ -33,6 +33,11 @@ from pbl_jobs_finder.modules.interview_agent import InterviewReport, InterviewSe
 from pbl_jobs_finder.modules.quota import quota_service
 from pbl_jobs_finder.modules.resume_diagnosis import ResumeDiagnosisService
 from pbl_jobs_finder.modules.resume_pdf import document_to_markdown
+from pbl_jobs_finder.modules.resume_templates import (
+    DEFAULT_RESUME_TEMPLATE_ID,
+    RESUME_TEMPLATE_CHOICES,
+    get_resume_template,
+)
 from pbl_jobs_finder.utils.logging import configure_logging, report_exception
 
 logger = logging.getLogger(__name__)
@@ -306,6 +311,7 @@ def generate_resume_callback(
     optimized_text: str,
     supplemental_experience: str,
     photo_file: str | None = None,
+    template_id: str = DEFAULT_RESUME_TEMPLATE_ID,
 ) -> tuple:
     """Generate a structured resume and downloadable PDF."""
 
@@ -316,6 +322,7 @@ def generate_resume_callback(
             optimized_text=optimized_text,
             supplemental_experience=supplemental_experience,
             photo_file=photo_file,
+            template_id=template_id,
         )
     except (
         AuthenticationError,
@@ -334,6 +341,7 @@ def generate_resume_callback(
             record_id=record_id if isinstance(record_id, int) else "invalid",
             supplemental_chars=len(supplemental_experience or ""),
             has_photo=bool(photo_file),
+            template_id=template_id,
         )
         enabled = gr.update(interactive=True)
         return (
@@ -354,14 +362,16 @@ def generate_resume_callback(
             record_id=record_id if isinstance(record_id, int) else "invalid",
             supplemental_chars=len(supplemental_experience or ""),
             has_photo=bool(photo_file),
+            template_id=template_id,
         )
         return _generation_failure(f"系统异常，请稍后重试（错误编号：{error_id}）")
     enabled = gr.update(interactive=True)
+    template_label = get_resume_template(outcome.template_id).label
     return (
         gr.update(visible=False),
         "",
         gr.update(value=str(outcome.pdf_path), visible=True),
-        "新版 PDF 简历已生成，可直接下载。",
+        f"{template_label} PDF 简历已生成，可直接下载。",
         document_to_markdown(outcome.document),
         enabled,
         enabled,
@@ -1035,6 +1045,12 @@ def build_app() -> gr.Blocks:
                                     file_types=[".jpg", ".jpeg", ".png", ".webp"],
                                     type="filepath",
                                 )
+                                resume_template = gr.Radio(
+                                    choices=list(RESUME_TEMPLATE_CHOICES),
+                                    value=DEFAULT_RESUME_TEMPLATE_ID,
+                                    label="简历模板",
+                                    visible=resume_service.enable_templates,
+                                )
                                 with gr.Row():
                                     cancel_supplement_button = gr.Button("取消")
                                     confirm_generate_button = gr.Button(
@@ -1304,6 +1320,7 @@ def build_app() -> gr.Blocks:
                 optimized_resume,
                 supplemental_experience,
                 resume_photo,
+                resume_template,
             ],
             outputs=generation_outputs,
             trigger_mode="once",

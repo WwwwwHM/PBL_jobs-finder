@@ -24,6 +24,10 @@ from pydantic import (
 )
 
 from pbl_jobs_finder.exceptions import ResumeDocumentError, ResumePDFError
+from pbl_jobs_finder.modules.resume_templates import (
+    DEFAULT_RESUME_TEMPLATE_ID,
+    get_resume_template,
+)
 
 ShortText = Annotated[str, Field(max_length=160)]
 LongText = Annotated[str, Field(max_length=1200)]
@@ -166,8 +170,14 @@ def render_resume_html(
     document: ResumeDocument,
     *,
     photo_data_uri: str | None = None,
+    template_id: str = DEFAULT_RESUME_TEMPLATE_ID,
 ) -> str:
-    """Render only validated, escaped fields into the fixed print template."""
+    """Render validated, escaped fields into one reviewed print template."""
+
+    try:
+        template = get_resume_template(template_id)
+    except ValueError as exc:
+        raise ResumePDFError(str(exc)) from exc
 
     basics = document.basics
     contacts = _render_contacts(basics)
@@ -204,36 +214,38 @@ def render_resume_html(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title}</title>
   <style>
-    @page {{ size: A4; margin: 14mm 16mm 16mm; }}
+    @page {{ size: A4; margin: {template.page_margin}; }}
     * {{ box-sizing: border-box; }}
-    html {{ color: #17202a; font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: 10pt; line-height: 1.48; }}
+    :root {{ --accent: {template.accent}; --accent-secondary: {template.accent_secondary}; --ink: {template.ink}; --muted: {template.muted}; --line: {template.line}; --photo-bg: {template.photo_background}; --tag-bg: {template.tag_background}; }}
+    html {{ color: var(--ink); font-family: "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; font-size: {template.font_size}; line-height: {template.line_height}; }}
     body {{ margin: 0; background: #fff; overflow-wrap: anywhere; }}
-    header {{ align-items: flex-start; border-bottom: 2px solid #176b57; display: flex; gap: 7mm; justify-content: space-between; margin-bottom: 5mm; min-height: 36mm; padding-bottom: 3.5mm; }}
+    header {{ align-items: flex-start; border-bottom: 2px solid var(--accent); display: flex; gap: 7mm; justify-content: space-between; margin-bottom: 5mm; min-height: 36mm; padding-bottom: 3.5mm; }}
     .identity {{ min-width: 0; padding-top: 1mm; }}
-    .resume-photo {{ background: #f2f4f5; border: 1px solid #cbd3d0; flex: 0 0 28mm; height: 36mm; object-fit: cover; width: 28mm; }}
+    .resume-photo {{ background: var(--photo-bg); border: 1px solid var(--line); flex: 0 0 28mm; height: 36mm; object-fit: cover; width: 28mm; }}
     h1 {{ font-size: 24pt; line-height: 1.15; margin: 0; }}
-    .headline {{ color: #176b57; font-size: 11.5pt; font-weight: 700; margin: 1.5mm 0 0; }}
-    .contacts {{ color: #4a5560; display: flex; flex-wrap: wrap; gap: 1.2mm 4mm; margin-top: 2.5mm; }}
+    .headline {{ color: var(--accent); font-size: 11.5pt; font-weight: 700; margin: 1.5mm 0 0; }}
+    .contacts {{ color: var(--muted); display: flex; flex-wrap: wrap; gap: 1.2mm 4mm; margin-top: 2.5mm; }}
     .contact-item {{ display: inline-flex; min-width: 0; }}
-    .contact-label {{ color: #2f3d46; flex: 0 0 auto; font-weight: 600; }}
+    .contact-label {{ color: var(--ink); flex: 0 0 auto; font-weight: 600; }}
     .contact-value {{ min-width: 0; overflow-wrap: anywhere; }}
     .contacts a {{ color: inherit; text-decoration: none; }}
     section {{ margin-top: 4.5mm; }}
-    h2 {{ border-bottom: 1px solid #b9c5c1; color: #176b57; font-size: 12.5pt; margin: 0 0 2.2mm; padding-bottom: 1mm; break-after: avoid; }}
+    h2 {{ border-bottom: 1px solid var(--line); color: var(--accent); font-size: 12.5pt; margin: 0 0 2.2mm; padding-bottom: 1mm; break-after: avoid; }}
     p {{ margin: 0; white-space: pre-line; }}
     .entry {{ break-inside: avoid; margin: 0 0 3.2mm; }}
     .entry:last-child {{ margin-bottom: 0; }}
     .entry-head {{ align-items: baseline; display: flex; gap: 3mm; justify-content: space-between; }}
     .entry-title {{ font-size: 10.5pt; font-weight: 700; }}
-    .entry-meta {{ color: #56616b; flex: 0 0 auto; font-size: 9pt; }}
-    .entry-subtitle {{ color: #39434d; font-weight: 600; margin-top: .6mm; }}
+    .entry-meta {{ color: var(--muted); flex: 0 0 auto; font-size: 9pt; }}
+    .entry-subtitle {{ color: var(--ink); font-weight: 600; margin-top: .6mm; }}
     ul {{ margin: 1.2mm 0 0; padding-left: 5mm; }}
     li {{ margin: .7mm 0; padding-left: .8mm; }}
     .tags {{ display: flex; flex-wrap: wrap; gap: 1.5mm; list-style: none; margin: 0; padding: 0; }}
-    .tags li {{ background: #eef4f2; border: 1px solid #cbd9d5; border-radius: 2px; margin: 0; padding: 1mm 2mm; }}
+    .tags li {{ background: var(--tag-bg); border: 1px solid var(--line); border-radius: 2px; margin: 0; padding: 1mm 2mm; }}
+    {template.layout_css}
   </style>
 </head>
-<body>
+<body data-template="{template.id}">
   <header>
     <div class="identity">
       <h1>{title}</h1>
@@ -354,6 +366,7 @@ def create_resume_pdf(
     record_id: int | None = None,
     renderer: PDFRenderer | None = None,
     photo_data_uri: str | None = None,
+    template_id: str = DEFAULT_RESUME_TEMPLATE_ID,
 ) -> Path:
     """Render a validated resume to a stable A4 PDF via Playwright."""
 
@@ -366,7 +379,14 @@ def create_resume_pdf(
     render = renderer or _render_pdf_with_playwright
 
     try:
-        render(render_resume_html(document, photo_data_uri=photo_data_uri), temporary)
+        render(
+            render_resume_html(
+                document,
+                photo_data_uri=photo_data_uri,
+                template_id=template_id,
+            ),
+            temporary,
+        )
         if not temporary.is_file() or temporary.stat().st_size < 5:
             raise ResumePDFError("PDF 简历生成失败，请稍后重试")
         with temporary.open("rb") as stream:

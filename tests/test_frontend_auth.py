@@ -422,19 +422,27 @@ class FrontendAuthTests(unittest.TestCase):
                 basics=ResumeBasics(name="张三", headline="Python 后端工程师")
             ),
             pdf_path=Path("resume.pdf"),
+            template_id="technical",
         )
         with patch.object(
             frontend.resume_service,
             "generate_pdf_resume",
             return_value=outcome,
         ) as generate:
-            frontend.generate_resume_callback(
-                "token", 12, "# 张三", "补充缓存改造", "portrait.png"
+            result = frontend.generate_resume_callback(
+                "token",
+                12,
+                "# 张三",
+                "补充缓存改造",
+                "portrait.png",
+                "technical",
             )
         self.assertEqual(
             generate.call_args.kwargs["supplemental_experience"], "补充缓存改造"
         )
         self.assertEqual(generate.call_args.kwargs["photo_file"], "portrait.png")
+        self.assertEqual(generate.call_args.kwargs["template_id"], "technical")
+        self.assertIn("技术重点", result[3])
 
     def test_generate_failure_keeps_supplement_panel_and_input(self) -> None:
         with (

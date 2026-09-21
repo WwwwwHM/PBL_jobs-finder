@@ -656,6 +656,53 @@ class ResumeDiagnosisServiceTests(unittest.TestCase):
             self.assertEqual(payload["basics"]["name"], "张三")
             self.assertIn("320ms", payload["experience"][0]["highlights"][0])
 
+    def test_template_selection_is_flag_gated_and_persisted_after_render(self) -> None:
+        outcome = self.service.diagnose(
+            token="token-a",
+            position="Python 后端工程师",
+            pasted_text="张三，五年 Python 后端经验，负责订单服务的开发、测试与维护。",
+        )
+        previous_prompt = self.service.chat_client.user_prompt
+        with self.assertRaisesRegex(ResumeValidationError, "尚未启用"):
+            self.service.generate_pdf_resume(
+                token="token-a",
+                record_id=outcome.record_id,
+                optimized_text=outcome.diagnosis.optimized_text,
+                template_id="compact",
+            )
+        self.assertEqual(self.service.chat_client.user_prompt, previous_prompt)
+
+        self.service.enable_templates = True
+        self.service.chat_client.response = _resume_document_response()
+        rendered_html = ""
+
+        def capture_renderer(html: str, destination: Path) -> None:
+            nonlocal rendered_html
+            rendered_html = html
+            destination.write_bytes(b"%PDF-1.4\n%%EOF")
+
+        self.service.pdf_renderer = capture_renderer
+        generated = self.service.generate_pdf_resume(
+            token="token-a",
+            record_id=outcome.record_id,
+            optimized_text=outcome.diagnosis.optimized_text,
+            template_id="compact",
+        )
+
+        self.assertEqual(generated.template_id, "compact")
+        self.assertIn('data-template="compact"', rendered_html)
+        with self.database.session() as session:
+            stored = get_resume_record(session, outcome.record_id)
+            self.assertEqual(stored.template_id, "compact")
+
+        with self.assertRaisesRegex(ResumeValidationError, "未知的简历模板"):
+            self.service.generate_pdf_resume(
+                token="token-a",
+                record_id=outcome.record_id,
+                optimized_text=outcome.diagnosis.optimized_text,
+                template_id="unknown",
+            )
+
     def test_repeated_generation_uses_previous_generated_document_as_baseline(
         self,
     ) -> None:
