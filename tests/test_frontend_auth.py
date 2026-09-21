@@ -217,6 +217,8 @@ class FrontendAuthTests(unittest.TestCase):
             position="Java 后端开发工程师",
             job_description="负责 Spring Boot 微服务",
             resume_text="负责订单系统开发",
+            mode="standard_live",
+            feedback_mode="live",
         )
         self.assertEqual(result[1], 23)
         self.assertEqual(result[2], "第 1 题 / 共 5 题")
@@ -307,6 +309,32 @@ class FrontendAuthTests(unittest.TestCase):
         self.assertEqual(result[5], outcome.next_question)
         self.assertTrue(result[1]["interactive"])
         self.assertTrue(result[2]["interactive"])
+
+    def test_deferred_feedback_uses_dynamic_focused_progress(self) -> None:
+        outcome = InterviewAnswerOutcome(
+            session_id=23,
+            question_round=2,
+            answer="回答",
+            feedback="",
+            next_question="请说明你如何复盘并验证改进效果？",
+            follow_up_count=1,
+            is_follow_up=True,
+            is_finished=False,
+            total_questions=3,
+            max_follow_up_count=1,
+            feedback_mode="deferred",
+        )
+        with patch.object(
+            frontend.interview_service,
+            "submit_answer",
+            return_value=outcome,
+        ):
+            result = frontend.submit_interview_answer_callback(
+                "回答", 23, "token", "当前问题"
+            )
+
+        self.assertIn("面试结束后", result[0])
+        self.assertEqual(result[3], "第 2 题 / 共 3 题 · 追问 1 / 1")
 
     def test_completed_interview_displays_saved_structured_report(self) -> None:
         report = InterviewReport(

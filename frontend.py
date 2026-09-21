@@ -38,6 +38,13 @@ from pbl_jobs_finder.modules.resume_templates import (
     RESUME_TEMPLATE_CHOICES,
     get_resume_template,
 )
+from pbl_jobs_finder.policies.interview_policy import (
+    DEFAULT_FEEDBACK_MODE,
+    DEFAULT_INTERVIEW_MODE,
+    FEEDBACK_MODE_CHOICES,
+    INTERVIEW_STANDARD_POLICY_VERSION,
+    get_interview_mode_choices,
+)
 from pbl_jobs_finder.utils.logging import configure_logging, report_exception
 
 logger = logging.getLogger(__name__)
@@ -409,6 +416,8 @@ def start_interview_callback(
     job_description: str,
     resume_text: str,
     token: str,
+    mode: str = DEFAULT_INTERVIEW_MODE,
+    feedback_mode: str = DEFAULT_FEEDBACK_MODE,
 ) -> tuple:
     """Create an interview session and display its first question."""
 
@@ -418,6 +427,8 @@ def start_interview_callback(
             position=position,
             job_description=job_description,
             resume_text=resume_text,
+            mode=mode,
+            feedback_mode=feedback_mode,
         )
         remaining = quota_service.status(token).remaining
     except (
@@ -548,7 +559,11 @@ def submit_interview_answer_callback(
             gr.update(),
             gr.update(),
         )
-    feedback = f"### AI 反馈\n\n{outcome.feedback}"
+    feedback = (
+        f"### AI 反馈\n\n{outcome.feedback}"
+        if outcome.feedback
+        else "本轮反馈将在面试结束后统一展示。"
+    )
     if outcome.is_finished:
         if outcome.report is None:
             error_id = report_exception(
@@ -558,32 +573,34 @@ def submit_interview_answer_callback(
                 session_id=outcome.session_id,
             )
             return (
-                f"{feedback}\n\n**报告展示失败：** 请点击“重新开始”开启新一轮面试（错误编号：{error_id}）",
+                f"**报告展示失败：** 请点击“重新开始”开启新一轮面试（错误编号：{error_id}）",
                 gr.update(value="", interactive=False),
                 gr.update(interactive=False),
-                "已完成 5 题",
+                f"已完成 {outcome.total_questions} 题",
                 "### 本轮面试已完成",
                 "",
                 "面试已完成，但报告未能展示。",
             )
         return (
-            f"{feedback}\n\n{_format_interview_report(outcome.report)}",
+            _format_interview_report(outcome.report),
             gr.update(value="", interactive=False),
             gr.update(interactive=False),
-            "已完成 5 题",
+            f"已完成 {outcome.total_questions} 题",
             "### 本轮面试已完成",
             "",
             "面试已完成，报告已保存。可点击“重新开始”开启新一轮面试。",
         )
     if outcome.is_follow_up:
         progress = (
-            f"第 {outcome.question_round} 题 / 共 5 题 · "
-            f"追问 {outcome.follow_up_count} / 3"
+            f"第 {outcome.question_round} 题 / 共 {outcome.total_questions} 题 · "
+            f"追问 {outcome.follow_up_count} / {outcome.max_follow_up_count}"
         )
         question = f"### 面试官追问\n\n{outcome.next_question}"
         status = "请继续回答本题追问。"
     else:
-        progress = f"第 {outcome.question_round} 题 / 共 5 题"
+        progress = (
+            f"第 {outcome.question_round} 题 / 共 {outcome.total_questions} 题"
+        )
         question = f"### 面试官提问\n\n{outcome.next_question}"
         status = f"已进入第 {outcome.question_round} 题。"
     return (
@@ -1090,6 +1107,23 @@ def build_app() -> gr.Blocks:
                                 "使用当前优化稿",
                                 size="sm",
                             )
+                    with gr.Row(visible=interview_service.enable_modes):
+                        interview_mode = gr.Radio(
+                            choices=list(
+                                get_interview_mode_choices(
+                                    interview_service.interview_policy_version
+                                    if interview_service.enable_modes
+                                    else INTERVIEW_STANDARD_POLICY_VERSION
+                                )
+                            ),
+                            value=DEFAULT_INTERVIEW_MODE,
+                            label="面试节奏",
+                        )
+                        interview_feedback_mode = gr.Radio(
+                            choices=list(FEEDBACK_MODE_CHOICES),
+                            value=DEFAULT_FEEDBACK_MODE,
+                            label="反馈方式",
+                        )
                     with gr.Row():
                         start_interview_button = gr.Button(
                             "开始面试",
@@ -1346,6 +1380,8 @@ def build_app() -> gr.Blocks:
                 interview_jd,
                 interview_resume,
                 token_state,
+                interview_mode,
+                interview_feedback_mode,
             ],
             outputs=[
                 interview_status,

@@ -44,3 +44,12 @@ and `technical`. Templates only style validated and escaped resume fields; they
 are never accepted from model output or loaded from an external repository.
 Selection is feature-flagged, validated before model generation, and persisted
 only after a PDF is rendered successfully.
+
+## M3 Interview Policy
+
+`interview-standard-v1` defines independently implemented standard and focused
+interview modes plus live and deferred feedback. A deterministic, fact-neutral
+competency plan is persisted when the session starts. The model generates one
+question at a time, while the server owns round counts, follow-up limits,
+feedback release, completion, and report persistence. No CareerForge prompt,
+question set, scoring text, or runtime code is used.

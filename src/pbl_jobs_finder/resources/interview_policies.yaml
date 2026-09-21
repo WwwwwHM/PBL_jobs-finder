@@ -1,0 +1,31 @@
+policies:
+  interview-standard-v1:
+    version: interview-standard-v1
+    label: 通用岗位结构化模拟面试
+    modes:
+      standard_live:
+        label: 标准面试
+        question_count: 5
+        max_follow_up_count: 3
+        competencies:
+          - key: experience_evidence
+            objective: 核验代表性经历、个人职责和实际贡献
+          - key: role_core
+            objective: 考察目标岗位的核心知识与实际应用
+          - key: problem_solving
+            objective: 考察问题拆解、定位过程和验证方法
+          - key: tradeoffs
+            objective: 考察方案取舍、风险意识和协作推进
+          - key: reflection
+            objective: 考察复盘能力、成长意识和方法沉淀
+      focused_live:
+        label: 快速面试
+        question_count: 3
+        max_follow_up_count: 1
+        competencies:
+          - key: experience_evidence
+            objective: 核验最相关经历、个人职责和实际贡献
+          - key: role_core
+            objective: 集中考察目标岗位最关键的专业能力
+          - key: reflection
+            objective: 考察方案取舍、复盘能力和改进意识

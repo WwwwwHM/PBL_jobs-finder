@@ -221,6 +221,130 @@ class InterviewServiceTests(unittest.TestCase):
             self.assertEqual([item.id for item in user_a], [first.session_id])
             self.assertEqual([item.id for item in user_b], [second.session_id])
 
+    def test_interview_modes_are_flag_gated_before_quota_and_retrieval(self) -> None:
+        with self.assertRaisesRegex(InterviewValidationError, "尚未启用"):
+            self.service.start(
+                token="token-a",
+                position="Java 后端工程师",
+                mode="focused_live",
+            )
+        self.assertEqual(self.quota.status("token-a").used, 0)
+        self.assertEqual(self.store.calls, [])
+
+    def test_focused_deferred_mode_uses_persisted_plan_and_finishes_at_three(
+        self,
+    ) -> None:
+        service = InterviewService(
+            database_instance=self.database,
+            quota=self.quota,
+            vector_store=self.store,
+            chat_client=self.client,
+            token_verifier=lambda token: self.identities.get(token),
+            enable_modes=True,
+        )
+        started = service.start(
+            token="token-a",
+            position="Java 后端工程师",
+            mode="focused_live",
+            feedback_mode="deferred",
+        )
+
+        self.assertEqual(started.total_questions, 3)
+        self.assertEqual(started.max_follow_up_count, 1)
+        self.assertEqual(started.feedback_mode, "deferred")
+        self.assertEqual(self.store.calls[0]["top_k"], 3)
+        self.assertIn("核验最相关经历", self.client.user_prompt)
+        with self.database.session() as session:
+            saved = get_interview_session(session, started.session_id)
+            plan = json.loads(saved.question_plan_json)
+            self.assertEqual(saved.mode, "focused_live")
+            self.assertEqual(saved.feedback_mode, "deferred")
+            self.assertEqual(len(plan), 3)
+
+            final_question = "请说明你会如何复盘一次关键技术决策并推动改进？"
+            conversation = json.loads(saved.conversation_json)
+            conversation.append(
+                {
+                    "role": "interviewer",
+                    "content": final_question,
+                    "kind": "main_question",
+                    "round": 3,
+                }
+            )
+            update_interview_session(
+                session,
+                started.session_id,
+                current_question=final_question,
+                question_rounds=3,
+                follow_up_count=0,
+                conversation=conversation,
+            )
+
+        self.client.responses = [
+            json.dumps(
+                {
+                    "feedback": "回答给出了复盘步骤和改进行动，但还可以补充如何验证行动项已经产生效果。",
+                    "needs_follow_up": False,
+                    "next_question": "模型不应保留的额外问题？",
+                },
+                ensure_ascii=False,
+            ),
+            self._report_json(),
+        ]
+        completed = service.submit_answer(
+            token="token-a",
+            session_id=started.session_id,
+            answer="我会整理事实和决策依据，明确行动项、负责人和验证指标。",
+            expected_question=final_question,
+        )
+
+        self.assertTrue(completed.is_finished)
+        self.assertEqual(completed.total_questions, 3)
+        self.assertEqual(completed.max_follow_up_count, 1)
+        self.assertEqual(completed.feedback_mode, "deferred")
+        self.assertEqual(completed.feedback, "")
+        self.assertIsNotNone(completed.report)
+
+    def test_question_prompts_forbid_cross_section_technology_attribution(self) -> None:
+        resume = """项目经历
+AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟面试。
+
+主修课程
+模式识别、数字信号处理。"""
+        started = self.service.start(
+            token="token-a",
+            position="AI 应用开发工程师",
+            resume_text=resume,
+        )
+
+        self.assertIn(
+            "不得把技能清单、课程、研究方向或其他项目中的技术",
+            self.client.system_prompt,
+        )
+        self.assertIn("不代表候选人使用过相关技术", self.client.user_prompt)
+        self.assertIn("模式识别、数字信号处理", self.client.user_prompt)
+
+        self.client.response = json.dumps(
+            {
+                "feedback": "回答说明了项目目标和主要组件，建议进一步补充检索效果的验证指标。",
+                "needs_follow_up": False,
+                "next_question": "在这个项目中，你如何评估 ChromaDB 的检索质量并调整召回策略？",
+            },
+            ensure_ascii=False,
+        )
+        self.service.submit_answer(
+            token="token-a",
+            session_id=started.session_id,
+            answer="我用命中率和人工评审样本检查召回结果，并调整查询文本。",
+            expected_question=started.question,
+        )
+
+        self.assertIn(
+            "不得把技能清单、课程、研究方向或其他项目中的技术",
+            self.client.system_prompt,
+        )
+        self.assertIn("不代表候选人使用过相关技术", self.client.user_prompt)
+
     def test_invalid_inputs_are_rejected_before_quota_and_retrieval(self) -> None:
         invalid_cases = [
             {"position": " "},
