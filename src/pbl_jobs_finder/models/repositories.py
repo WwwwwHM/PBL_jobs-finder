@@ -108,6 +108,18 @@ def get_resume_record(session: Session, record_id: int) -> ResumeRecord | None:
     return session.get(ResumeRecord, record_id)
 
 
+def get_resume_record_for_user(
+    session: Session, record_id: int, phone: str
+) -> ResumeRecord | None:
+    """Return one resume only when it belongs to the authenticated user."""
+
+    statement = select(ResumeRecord).where(
+        ResumeRecord.id == record_id,
+        ResumeRecord.phone == phone,
+    )
+    return session.scalar(statement)
+
+
 def get_recent_resume_records(
     session: Session, phone: str, limit: int = 5
 ) -> list[ResumeRecord]:
@@ -188,6 +200,18 @@ def get_interview_session(
     session: Session, interview_id: int
 ) -> InterviewSession | None:
     return session.get(InterviewSession, interview_id)
+
+
+def get_interview_session_for_user(
+    session: Session, interview_id: int, phone: str
+) -> InterviewSession | None:
+    """Return one interview only when it belongs to the authenticated user."""
+
+    statement = select(InterviewSession).where(
+        InterviewSession.id == interview_id,
+        InterviewSession.phone == phone,
+    )
+    return session.scalar(statement)
 
 
 def get_recent_interview_sessions(

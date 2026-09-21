@@ -9,7 +9,9 @@ import frontend
 from pbl_jobs_finder import Message
 from pbl_jobs_finder.modules.history import (
     HistorySnapshot,
+    InterviewHistoryDetail,
     InterviewHistoryItem,
+    ResumeHistoryDetail,
     ResumeHistoryItem,
 )
 from pbl_jobs_finder.modules.interview_agent import (
@@ -117,6 +119,8 @@ class FrontendAuthTests(unittest.TestCase):
                 frontend.clear_interview_workspace,
                 frontend.clear_history_workspace,
                 frontend.load_history_callback,
+                frontend.load_interview_history_detail_callback,
+                frontend.load_resume_history_detail_callback,
                 frontend.use_optimized_resume_callback,
                 frontend.open_supplement_callback,
                 frontend.login,
@@ -155,12 +159,18 @@ class FrontendAuthTests(unittest.TestCase):
             ),
         )
         with patch.object(frontend.history_service, "get_recent", return_value=snapshot):
-            resumes, interviews, status = frontend.load_history_callback("token")
+            resumes, interviews, status, detail = frontend.load_history_callback("token")
 
-        self.assertEqual(resumes[0][1:], ["Python 后端工程师", "88 / 100"])
-        self.assertEqual(interviews[0][1:], ["Java 后端工程师", "5 轮", "已完成"])
+        self.assertEqual(
+            resumes[0], [12, "2026-09-18 15:20", "Python 后端工程师", "88 / 100"]
+        )
+        self.assertEqual(
+            interviews[0],
+            [23, "2026-09-18 16:10", "Java 后端工程师", "5 轮", "已完成"],
+        )
         self.assertIn("简历诊断 1 条", status)
         self.assertIn("模拟面试 1 条", status)
+        self.assertEqual(detail, "")
 
     def test_history_callback_handles_empty_invalid_and_unexpected_failures(self) -> None:
         with patch.object(
@@ -191,6 +201,97 @@ class FrontendAuthTests(unittest.TestCase):
         ):
             failed = frontend.load_history_callback("token")
         self.assertIn("history123", failed[2])
+
+    def test_history_selection_formats_owned_resume_and_interview_details(self) -> None:
+        resume_detail = ResumeHistoryDetail(
+            record_id=12,
+            created_at="2026-09-18 15:20",
+            target_position="Python 后端工程师",
+            score=88,
+            grade="A",
+            policy_version="resume-general-v1",
+            template_id="technical",
+            missing_keywords=("容量规划",),
+            suggestions="补充真实指标",
+            optimized_text="<script>alert('x')</script>\n# 优化稿",
+            diagnosis={
+                "strengths": ["项目职责清晰"],
+                "dimensions": {
+                    "hard_skill_match": {
+                        "score": 86,
+                        "confidence": "high",
+                        "evidence": ["项目使用 Python"],
+                        "gaps": [],
+                        "recommendations": ["补充性能数据"],
+                    }
+                },
+            },
+        )
+        interview_detail = InterviewHistoryDetail(
+            session_id=23,
+            created_at="2026-09-18 16:10",
+            position="Java 后端工程师",
+            status="completed",
+            question_rounds=3,
+            mode="focused_live",
+            feedback_mode="deferred",
+            policy_version="interview-standard-v1",
+            conversation=(
+                {
+                    "role": "interviewer",
+                    "kind": "main_question",
+                    "round": 1,
+                    "content": "请介绍代表项目",
+                },
+                {
+                    "role": "candidate",
+                    "kind": "answer",
+                    "round": 1,
+                    "content": "我负责接口设计",
+                },
+            ),
+            report={
+                "scores": {"logic": 84, "professional": 81, "communication": 87},
+                "summary": "回答结构清晰",
+                "knowledge_gaps": ["容量规划"],
+                "improvement_suggestions": ["补充验证指标"],
+                "reference_answers": [],
+            },
+        )
+        resume_event = type(
+            "Selection", (), {"selected": True, "row_value": [12, "time"]}
+        )()
+        interview_event = type(
+            "Selection", (), {"selected": True, "row_value": [23, "time"]}
+        )()
+        with (
+            patch.object(
+                frontend.history_service,
+                "get_resume_detail",
+                return_value=resume_detail,
+            ) as get_resume,
+            patch.object(
+                frontend.history_service,
+                "get_interview_detail",
+                return_value=interview_detail,
+            ) as get_interview,
+        ):
+            resume_output = frontend.load_resume_history_detail_callback(
+                "token", resume_event
+            )
+            interview_output = frontend.load_interview_history_detail_callback(
+                "token", interview_event
+            )
+
+        get_resume.assert_called_once_with("token", 12)
+        get_interview.assert_called_once_with("token", 23)
+        self.assertIn("硬技能匹配度", resume_output)
+        self.assertIn("技术重点", resume_output)
+        self.assertNotIn("<script>", resume_output)
+        self.assertIn("快速面试", interview_output)
+        self.assertIn("面试后反馈", interview_output)
+        self.assertIn("我负责接口设计", interview_output)
+        self.assertIn("84 / 100", interview_output)
 
     def test_interview_callback_displays_first_question_and_updates_quota(self) -> None:
         outcome = InterviewStartOutcome(

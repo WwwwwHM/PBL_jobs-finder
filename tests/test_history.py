@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import frontend
-from pbl_jobs_finder.exceptions import AuthenticationError
+from pbl_jobs_finder.exceptions import (
+    AuthenticationError,
+    InterviewAccessError,
+    ResumeAccessError,
+)
 from pbl_jobs_finder.models.database import Database
 from pbl_jobs_finder.models.repositories import (
     create_interview_session,
@@ -108,6 +113,144 @@ class HistoryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(AuthenticationError, "登录已失效"):
             self.service.get_recent("invalid-token")
 
+    def test_authenticated_details_include_policy_results_and_transcript(self) -> None:
+        diagnosis = {
+            "dimensions": {
+                "hard_skill_match": {
+                    "score": 86,
+                    "evidence": ["项目中使用 Python"],
+                    "gaps": ["缺少性能数据"],
+                    "recommendations": ["补充真实吞吐量"],
+                    "confidence": "high",
+                }
+            },
+            "strengths": ["项目职责清晰"],
+        }
+        report = {
+            "scores": {"logic": 84, "professional": 81, "communication": 87},
+            "summary": "回答结构清晰",
+            "knowledge_gaps": ["容量规划"],
+            "improvement_suggestions": ["补充验证指标"],
+            "reference_answers": [],
+        }
+        with self.database.session() as session:
+            resume = create_resume_record(
+                session,
+                phone="13800138000",
+                original_text="原始简历",
+                target_position="Python 后端工程师",
+                score=84,
+                missing_keywords=["压测"],
+                suggestions="补充结果指标",
+                optimized_text="优化后的完整简历",
+                policy_version="resume-general-v1",
+                grade="A",
+                diagnosis=diagnosis,
+                template_id="technical",
+            )
+            interview = create_interview_session(
+                session,
+                phone="13800138000",
+                position="Python 后端工程师",
+                mode="focused_live",
+                feedback_mode="deferred",
+            )
+            update_interview_session(
+                session,
+                interview.id,
+                status="completed",
+                question_rounds=3,
+                conversation=[
+                    {
+                        "role": "interviewer",
+                        "kind": "main_question",
+                        "round": 1,
+                        "content": "请介绍代表项目",
+                    },
+                    {
+                        "role": "candidate",
+                        "kind": "answer",
+                        "round": 1,
+                        "content": "我负责接口设计",
+                    },
+                ],
+                report=json.dumps(report, ensure_ascii=False),
+            )
+            resume_id = resume.id
+            interview_id = interview.id
+
+        resume_detail = self.service.get_resume_detail("token-a", resume_id)
+        interview_detail = self.service.get_interview_detail("token-a", interview_id)
+
+        self.assertEqual(resume_detail.policy_version, "resume-general-v1")
+        self.assertEqual(resume_detail.template_id, "technical")
+        self.assertEqual(resume_detail.missing_keywords, ("压测",))
+        self.assertEqual(
+            resume_detail.diagnosis["dimensions"]["hard_skill_match"]["score"], 86
+        )
+        self.assertEqual(interview_detail.mode, "focused_live")
+        self.assertEqual(interview_detail.feedback_mode, "deferred")
+        self.assertEqual(interview_detail.conversation[1]["content"], "我负责接口设计")
+        self.assertEqual(interview_detail.report["scores"]["logic"], 84)
+
+    def test_details_do_not_reveal_other_users_records(self) -> None:
+        with self.database.session() as session:
+            resume = create_resume_record(
+                session,
+                phone="13900139000",
+                original_text="用户B原始简历",
+                target_position="用户B岗位",
+                score=90,
+                missing_keywords=[],
+                suggestions="无",
+                optimized_text="用户B优化稿",
+            )
+            interview = create_interview_session(
+                session,
+                phone="13900139000",
+                position="用户B面试",
+            )
+            resume_id = resume.id
+            interview_id = interview.id
+
+        with self.assertRaisesRegex(ResumeAccessError, "无权访问"):
+            self.service.get_resume_detail("token-a", resume_id)
+        with self.assertRaisesRegex(InterviewAccessError, "无权访问"):
+            self.service.get_interview_detail("token-a", interview_id)
+
+    def test_corrupt_detail_json_degrades_to_empty_sections(self) -> None:
+        with self.database.session() as session:
+            resume = create_resume_record(
+                session,
+                phone="13800138000",
+                original_text="简历正文",
+                target_position="测试工程师",
+                score=80,
+                missing_keywords=[],
+                suggestions="补充测试范围",
+                optimized_text="优化稿",
+            )
+            interview = create_interview_session(
+                session,
+                phone="13800138000",
+                position="测试工程师",
+            )
+            resume.diagnosis_json = "{broken"
+            resume.missing_keywords_json = "{}"
+            interview.conversation_json = "{broken"
+            interview.report = "[]"
+            session.flush()
+            resume_id = resume.id
+            interview_id = interview.id
+
+        resume_detail = self.service.get_resume_detail("token-a", resume_id)
+        interview_detail = self.service.get_interview_detail("token-a", interview_id)
+
+        self.assertEqual(resume_detail.diagnosis, {})
+        self.assertEqual(resume_detail.missing_keywords, ())
+        self.assertEqual(interview_detail.conversation, ())
+        self.assertEqual(interview_detail.report, {})
+
     def test_database_summaries_flow_into_frontend_tables(self) -> None:
         with self.database.session() as session:
             create_resume_record(
@@ -133,14 +276,17 @@ class HistoryServiceTests(unittest.TestCase):
             )
 
         with patch.object(frontend, "history_service", self.service):
-            resume_rows, interview_rows, status = frontend.load_history_callback(
+            resume_rows, interview_rows, status, detail = frontend.load_history_callback(
                 "token-a"
             )
 
-        self.assertEqual(resume_rows[0][1:], ["数据工程师", "84 / 100"])
-        self.assertEqual(interview_rows[0][1:], ["数据平台工程师", "3 轮", "进行中"])
+        self.assertEqual(resume_rows[0][2:], ["数据工程师", "84 / 100"])
+        self.assertEqual(
+            interview_rows[0][2:], ["数据平台工程师", "3 轮", "进行中"]
+        )
         self.assertNotIn("简历正文", str(resume_rows))
         self.assertIn("简历诊断 1 条", status)
+        self.assertEqual(detail, "")
 
 
 if __name__ == "__main__":

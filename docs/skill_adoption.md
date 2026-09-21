@@ -53,3 +53,14 @@ competency plan is persisted when the session starts. The model generates one
 question at a time, while the server owns round counts, follow-up limits,
 feedback release, completion, and report persistence. No CareerForge prompt,
 question set, scoring text, or runtime code is used.
+
+## M4 Review History
+
+M4 turns persisted results into an authenticated review workflow. Resume detail
+views expose the locally calculated score, policy metadata, evidence, gaps,
+recommendations, and optimized draft. Interview detail views expose the saved
+mode, feedback timing, transcript, and validated final report. Detail queries
+scope the record ID by the authenticated phone number and do not call an AI
+provider or consume quota. The workflow is independently implemented; no
+CareerForge history UI, report template, storage code, or runtime dependency is
+used.

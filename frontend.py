@@ -29,6 +29,11 @@ from pbl_jobs_finder.modules.auth import (
     verify_token,
 )
 from pbl_jobs_finder.modules.history import history_service
+from pbl_jobs_finder.modules.history_view import (
+    HISTORY_STATUS_LABELS,
+    format_interview_history_detail,
+    format_resume_history_detail,
+)
 from pbl_jobs_finder.modules.interview_agent import InterviewReport, InterviewService
 from pbl_jobs_finder.modules.quota import quota_service
 from pbl_jobs_finder.modules.resume_diagnosis import ResumeDiagnosisService
@@ -64,8 +69,8 @@ WRITE_TOKEN_JS = f"""(token) => {{
 resume_service = ResumeDiagnosisService()
 interview_service = InterviewService()
 
-RESUME_HISTORY_HEADERS = ["时间", "目标岗位", "匹配度"]
-INTERVIEW_HISTORY_HEADERS = ["时间", "目标岗位", "问答轮数", "状态"]
+RESUME_HISTORY_HEADERS = ["编号", "时间", "目标岗位", "匹配度"]
+INTERVIEW_HISTORY_HEADERS = ["编号", "时间", "目标岗位", "问答轮数", "状态"]
 
 
 def request_code(phone: str) -> str:
@@ -145,35 +150,38 @@ def logout(token: str) -> tuple:
     return (*_logged_out(message), "", "")
 
 
-def load_history_callback(token: str) -> tuple[list[list[str]], list[list[str]], str]:
+def load_history_callback(
+    token: str,
+) -> tuple[list[list[object]], list[list[object]], str, str]:
     """Load recent record summaries without exposing stored source content."""
 
     if not (token or "").strip():
-        return [], [], ""
+        return [], [], "", ""
     try:
         snapshot = history_service.get_recent(token)
     except AuthenticationError as exc:
         logger.warning("History rejected exception=%s", type(exc).__name__)
-        return [], [], f"**记录加载失败：** {exc}"
+        return [], [], f"**记录加载失败：** {exc}", ""
     except Exception as exc:  # noqa: BLE001 - keep unexpected failures debuggable
         error_id = report_exception(logger, "history.load", exc)
-        return [], [], f"**记录加载失败：** 请稍后重试（错误编号：{error_id}）"
+        return (
+            [],
+            [],
+            f"**记录加载失败：** 请稍后重试（错误编号：{error_id}）",
+            "",
+        )
 
-    status_labels = {
-        "created": "待开始",
-        "in_progress": "进行中",
-        "completed": "已完成",
-    }
     resume_rows = [
-        [item.created_at, item.target_position, f"{item.score} / 100"]
+        [item.record_id, item.created_at, item.target_position, f"{item.score} / 100"]
         for item in snapshot.resumes
     ]
     interview_rows = [
         [
+            item.session_id,
             item.created_at,
             item.position,
             f"{item.question_rounds} 轮",
-            status_labels.get(item.status, "状态异常"),
+            HISTORY_STATUS_LABELS.get(item.status, "状态异常"),
         ]
         for item in snapshot.interviews
     ]
@@ -184,13 +192,65 @@ def load_history_callback(token: str) -> tuple[list[list[str]], list[list[str]],
             f"已加载最近记录：简历诊断 {len(resume_rows)} 条，"
             f"模拟面试 {len(interview_rows)} 条。"
         )
-    return resume_rows, interview_rows, message
+    return resume_rows, interview_rows, message, ""
 
 
-def clear_history_workspace() -> tuple[list[object], list[object], str]:
+def clear_history_workspace() -> tuple[list[object], list[object], str, str]:
     """Clear history rows when authentication is removed."""
 
-    return [], [], ""
+    return [], [], "", ""
+
+
+def load_resume_history_detail_callback(token: str, evt: gr.SelectData) -> str:
+    """Load one selected resume diagnosis after ownership verification."""
+
+    if not evt.selected:
+        return ""
+    try:
+        detail = history_service.get_resume_detail(
+            token, _selected_history_id(evt, ResumeAccessError)
+        )
+    except (AuthenticationError, ResumeAccessError) as exc:
+        logger.warning("Resume history detail rejected exception=%s", type(exc).__name__)
+        return f"**详情加载失败：** {exc}"
+    except Exception as exc:  # noqa: BLE001 - return a searchable error reference
+        error_id = report_exception(logger, "history.resume_detail", exc)
+        return f"**详情加载失败：** 请稍后重试（错误编号：{error_id}）"
+    return format_resume_history_detail(detail)
+
+
+def load_interview_history_detail_callback(token: str, evt: gr.SelectData) -> str:
+    """Load one selected interview transcript after ownership verification."""
+
+    if not evt.selected:
+        return ""
+    try:
+        detail = history_service.get_interview_detail(
+            token, _selected_history_id(evt, InterviewAccessError)
+        )
+    except (AuthenticationError, InterviewAccessError) as exc:
+        logger.warning(
+            "Interview history detail rejected exception=%s", type(exc).__name__
+        )
+        return f"**详情加载失败：** {exc}"
+    except Exception as exc:  # noqa: BLE001 - return a searchable error reference
+        error_id = report_exception(logger, "history.interview_detail", exc)
+        return f"**详情加载失败：** 请稍后重试（错误编号：{error_id}）"
+    return format_interview_history_detail(detail)
+
+
+def _selected_history_id(
+    evt: gr.SelectData,
+    error_type: type[InterviewAccessError | ResumeAccessError],
+) -> int:
+    row = evt.row_value
+    try:
+        record_id = int(row[0]) if isinstance(row, list) else 0
+    except (TypeError, ValueError):
+        record_id = 0
+    if record_id <= 0:
+        raise error_type("历史记录选择已失效，请刷新后重试")
+    return record_id
 
 
 def diagnose_resume_callback(
@@ -872,6 +932,24 @@ def build_app() -> gr.Blocks:
         margin: 0 0 8px;
     }
 
+    .history-detail {
+        border-top: 1px solid var(--line);
+        margin-top: 16px;
+        padding-top: 18px;
+    }
+
+    .history-detail pre {
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .history-detail table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
     .supplement-overlay {
         background: rgba(23, 32, 51, 0.54);
         inset: 0;
@@ -1165,11 +1243,11 @@ def build_app() -> gr.Blocks:
                     resume_history = gr.Dataframe(
                         headers=RESUME_HISTORY_HEADERS,
                         value=[],
-                        datatype=["str", "str", "str"],
+                        datatype=["number", "str", "str", "str"],
                         type="array",
                         interactive=False,
                         wrap=False,
-                        column_widths=[150, 180, 100],
+                        column_widths=[70, 150, 180, 100],
                         height=260,
                         elem_classes="history-table",
                     )
@@ -1177,14 +1255,15 @@ def build_app() -> gr.Blocks:
                     interview_history = gr.Dataframe(
                         headers=INTERVIEW_HISTORY_HEADERS,
                         value=[],
-                        datatype=["str", "str", "str", "str"],
+                        datatype=["number", "str", "str", "str", "str"],
                         type="array",
                         interactive=False,
                         wrap=False,
-                        column_widths=[150, 180, 110, 100],
+                        column_widths=[70, 150, 180, 110, 100],
                         height=260,
                         elem_classes="history-table",
                     )
+                    history_detail = gr.Markdown(elem_classes="history-detail")
 
         send_code.click(request_code, inputs=phone, outputs=auth_status)
         auth_outputs = [
@@ -1196,7 +1275,12 @@ def build_app() -> gr.Blocks:
             token_state,
             browser_token,
         ]
-        history_outputs = [resume_history, interview_history, history_status]
+        history_outputs = [
+            resume_history,
+            interview_history,
+            history_status,
+            history_detail,
+        ]
         login_button.click(
             login,
             inputs=[phone, code],
@@ -1462,6 +1546,18 @@ def build_app() -> gr.Blocks:
             load_history_callback,
             inputs=token_state,
             outputs=history_outputs,
+            api_name=False,
+        )
+        resume_history.select(
+            load_resume_history_detail_callback,
+            inputs=token_state,
+            outputs=history_detail,
+            api_name=False,
+        )
+        interview_history.select(
+            load_interview_history_detail_callback,
+            inputs=token_state,
+            outputs=history_detail,
             api_name=False,
         )
 

@@ -10,7 +10,9 @@ from pbl_jobs_finder.modules.auth import (
 from pbl_jobs_finder.modules.history import (
     HistoryService,
     HistorySnapshot,
+    InterviewHistoryDetail,
     InterviewHistoryItem,
+    ResumeHistoryDetail,
     ResumeHistoryItem,
     history_service,
 )
@@ -70,6 +72,7 @@ __all__ = [
     "HistorySnapshot",
     "InterviewAccessError",
     "InterviewAnswerOutcome",
+    "InterviewHistoryDetail",
     "InterviewHistoryItem",
     "InterviewReport",
     "InterviewService",
@@ -83,6 +86,7 @@ __all__ = [
     "ResumeDiagnosis",
     "ResumeDiagnosisService",
     "ResumeDocument",
+    "ResumeHistoryDetail",
     "ResumeHistoryItem",
     "ResumeOCRError",
     "ResumePDFError",
