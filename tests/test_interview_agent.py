@@ -39,10 +39,16 @@ class FakeVectorStore:
             "如何优化一条执行缓慢的 SQL？",
         ]
         self.calls: list[dict[str, object]] = []
+        self.answer_calls: list[tuple[str, int]] = []
+        self.reference_answers: list[dict[str, str]] = []
 
     def search_for_interview(self, **kwargs: object) -> list[str]:
         self.calls.append(kwargs)
         return self.questions
+
+    def search_reference_answers(self, question: str, top_k: int = 3) -> list[dict[str, str]]:
+        self.answer_calls.append((question, top_k))
+        return self.reference_answers
 
 
 class FakeChatClient:
@@ -52,11 +58,13 @@ class FakeChatClient:
         self.system_prompt = ""
         self.user_prompt = ""
         self.calls = 0
+        self.prompts: list[str] = []
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         self.calls += 1
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
+        self.prompts.append(user_prompt)
         if self.responses:
             return self.responses.pop(0)
         return self.response
@@ -364,6 +372,11 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
 
     def test_answer_feedback_and_next_main_question_are_persisted_without_quota(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")
+        self.store.reference_answers = [{
+            "question": started.question,
+            "reference_answer": "Use latency percentiles and distributed tracing.",
+            "source": "bank.md",
+        }]
         self.client.response = json.dumps(
             {
                 "feedback": "回答给出了监控和链路追踪思路，但还可以补充如何用指标定位具体瓶颈。建议说明判断顺序和验证方法。",
@@ -385,6 +398,9 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
         self.assertFalse(outcome.is_finished)
         self.assertIn("幂等", outcome.next_question)
         self.assertEqual(self.quota.status("token-a").used, 1)
+        self.assertEqual(self.store.answer_calls, [(started.question, 3)])
+        self.assertIn("Use latency percentiles", self.client.user_prompt)
+        self.assertIn("bank.md", self.client.user_prompt)
         with self.database.session() as session:
             saved = get_interview_session(session, started.session_id)
             conversation = json.loads(saved.conversation_json)
@@ -511,6 +527,11 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
     def test_fifth_main_question_completion_marks_session_completed(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")
         final_question = self._move_to_final_question(started.session_id)
+        self.store.reference_answers = [{
+            "question": final_question,
+            "reference_answer": "Collect evidence, mitigate, verify and review.",
+            "source": "bank.md",
+        }]
         self.client.responses = [
             json.dumps(
                 {
@@ -532,6 +553,10 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
         self.assertEqual(outcome.next_question, "")
         self.assertIsNotNone(outcome.report)
         self.assertEqual(outcome.report.logic_score, 82)
+        self.assertEqual(self.store.answer_calls[0], (final_question, 3))
+        self.assertIn(final_question, self.store.answer_calls[1][0])
+        self.assertIn("Collect evidence", self.client.prompts[-2])
+        self.assertIn("Collect evidence", self.client.prompts[-1])
         with self.database.session() as session:
             saved = get_interview_session(session, started.session_id)
             self.assertEqual(saved.status, "completed")

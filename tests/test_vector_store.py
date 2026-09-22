@@ -45,6 +45,52 @@ class KeywordEmbedding:
 
 
 class QuestionBankTests(unittest.TestCase):
+    def test_markdown_preserves_answers_code_and_follow_up_parent(self) -> None:
+        content = (
+            "# Interview bank\n\n"
+            "## 1. How does an AI agent use tools?\n\n"
+            "Use a loop.\n\n```python\n## Not a question\nprint('tool')\n```\n\n"
+            "#### Implementation details\nKeep the tool result.\n\n"
+            "### 1.1 追问：When should the agent stop?\n\nStop on completion.\n\n"
+            "## 2. How should failures be handled?\n"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "bank.md"
+            path.write_text(content, encoding="utf-8-sig")
+            questions = load_question_bank(path)
+        self.assertEqual(len(questions), 3)
+        self.assertEqual(questions[0].question, "How does an AI agent use tools?")
+        self.assertIn("## Not a question", questions[0].reference_answer)
+        self.assertIn("#### Implementation details", questions[0].reference_answer)
+        self.assertNotIn("Stop on completion", questions[0].reference_answer)
+        self.assertEqual(questions[1].parent_question, questions[0].question)
+        self.assertEqual(questions[1].reference_answer, "Stop on completion.")
+        self.assertEqual(questions[2].reference_answer, "")
+        self.assertEqual(questions[1].source, "bank.md")
+
+    def test_markdown_ids_survive_answer_edits_and_renumbering(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "bank.md"
+            path.write_text("## 1. How does retrieval work?\nOld answer.", encoding="utf-8")
+            first = load_question_bank(path)
+            path.write_text("## 8. How does retrieval work?\nNew answer.", encoding="utf-8")
+            second = load_question_bank(path, position="检索工程师", category="检索系统")
+        self.assertEqual(first[0].id, second[0].id)
+        self.assertEqual(second[0].reference_answer, "New answer.")
+        self.assertEqual(second[0].position, "检索工程师")
+
+    def test_invalid_markdown_structure_is_rejected(self) -> None:
+        for content, error in [
+            ("# Empty bank", "不能为空"),
+            ("### An orphan follow up question?", "缺少所属"),
+            ("## A repeated question?\nOne\n## A repeated question?\nTwo", "重复 ID"),
+        ]:
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "bank.md"
+                path.write_text(content, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, error):
+                    load_question_bank(path)
+
     def test_default_bank_is_structured_unique_and_substantial(self) -> None:
         questions = load_question_bank()
 
@@ -106,6 +152,45 @@ class ChromaVectorStoreTests(unittest.TestCase):
         self.store.add_question_bank(questions)
         self.assertEqual(self.store.count, len(questions))
         self.assertEqual(self.embedding.batch_sizes, [20, 20, 2])
+
+    def test_reference_answers_are_paired_filtered_and_updated(self) -> None:
+        self.store.add_questions(["A legacy Java question without an answer?"])
+        self.assertEqual(self.store.search_reference_answers("Java"), [])
+        questions = [
+            InterviewQuestion(
+                id="q_java_answer", question="How does Java handle memory?",
+                position="Java engineer", difficulty="medium", category="runtime",
+                reference_answer="The garbage collector reclaims unused objects.",
+                source="bank.md",
+            ),
+            InterviewQuestion(
+                id="q_ai_answer", question="How does AI retrieval work?",
+                position="AI engineer", difficulty="medium", category="retrieval",
+                reference_answer="Retrieve relevant context before generation.",
+            ),
+        ]
+        self.store.add_question_bank(questions)
+        results = self.store.search_reference_answers("Java memory", top_k=1)
+        self.assertEqual(results[0]["question"], questions[0].question)
+        self.assertEqual(results[0]["reference_answer"], questions[0].reference_answer)
+        self.assertEqual(results[0]["source"], "bank.md")
+        self.assertIn(self.store.search("Java memory", top_k=1)[0], {
+            "A legacy Java question without an answer?", questions[0].question,
+        })
+        questions[0] = questions[0].model_copy(update={"reference_answer": "Updated answer."})
+        self.store.add_question_bank(questions)
+        self.assertEqual(self.store.count, 3)
+        self.assertEqual(
+            self.store.search_reference_answers("Java memory", top_k=1)[0]["reference_answer"],
+            "Updated answer.",
+        )
+        questions[0] = questions[0].model_copy(update={"reference_answer": ""})
+        self.store.add_question_bank(questions)
+        self.assertEqual(len(self.store.search_reference_answers("AI", top_k=5)), 1)
+        with self.assertRaises(ValueError):
+            self.store.search_reference_answers(" ")
+        with self.assertRaises(ValueError):
+            self.store.search_reference_answers("AI", top_k=0)
 
     def test_job_jd_and_resume_query_returns_top_five_related_questions(self) -> None:
         questions = load_question_bank()

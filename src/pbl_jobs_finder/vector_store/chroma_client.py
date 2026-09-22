@@ -151,6 +151,36 @@ class ChromaVectorStore:
         )
         return self.search(query, top_k=top_k)
 
+    def search_reference_answers(
+        self, question: str, top_k: int = 3
+    ) -> list[dict[str, str]]:
+        """Retrieve paired questions and answers; legacy question-only rows are excluded."""
+        query = question.strip() if isinstance(question, str) else ""
+        if not query:
+            raise ValueError("检索问题不能为空")
+        if top_k <= 0:
+            raise ValueError("top_k 必须大于零")
+        if self.count == 0:
+            return []
+        result = self._collection.query(
+            query_embeddings=[self._embedding_provider.get_embedding(query)],
+            n_results=min(top_k, self.count),
+            where={"has_reference_answer": True},
+            include=["documents", "metadatas"],
+        )
+        documents = (result.get("documents") or [[]])[0]
+        metadatas = (result.get("metadatas") or [[]])[0]
+        return [
+            {
+                "question": document,
+                "reference_answer": str(metadata["reference_answer"]),
+                "source": str(metadata.get("source", "")),
+                "parent_question": str(metadata.get("parent_question", "")),
+            }
+            for document, metadata in zip(documents, metadatas, strict=True)
+            if metadata and str(metadata.get("reference_answer", "")).strip()
+        ]
+
 
 def build_interview_query(
     *, position: str, job_description: str = "", resume_text: str = ""

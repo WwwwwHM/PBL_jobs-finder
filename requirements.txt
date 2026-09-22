@@ -23,6 +23,7 @@ zhipuai==2.0.1          # 智谱官方SDK（备选）
 requests==2.31.0        # HTTP请求
 
 # ===== 工具库 =====
+markdown-it-py==4.2.0  # Markdown question/answer parsing
 python-dotenv==1.0.0    # 环境变量管理
 python-docx==1.1.2      # 生成可编辑的新版 Word 简历
 playwright==1.47.0      # 固定 HTML 模板打印为 A4 PDF
