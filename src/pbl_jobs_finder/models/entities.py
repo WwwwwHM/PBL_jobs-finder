@@ -92,6 +92,9 @@ class InterviewSession(TimestampMixin, Base):
     follow_up_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     conversation_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     report: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    difficulty: Mapped[str] = mapped_column(
+        String(16), default="standard", server_default="standard", nullable=False
+    )
     mode: Mapped[str] = mapped_column(
         String(32), default="standard_live", server_default="standard_live", nullable=False
     )

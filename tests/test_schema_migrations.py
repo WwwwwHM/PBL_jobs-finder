@@ -51,6 +51,7 @@ class SchemaMigrationTests(unittest.TestCase):
                         "feedback_mode",
                         "policy_version",
                         "question_plan_json",
+                        "difficulty",
                     }
                     <= interview_columns
                 )
@@ -65,7 +66,7 @@ class SchemaMigrationTests(unittest.TestCase):
                     interview = connection.execute(
                         text(
                             "SELECT id, mode, feedback_mode, policy_version, "
-                            "question_plan_json FROM interview_sessions"
+                            "question_plan_json, difficulty FROM interview_sessions"
                         )
                     ).one()
                     migration_count = connection.execute(
@@ -78,7 +79,7 @@ class SchemaMigrationTests(unittest.TestCase):
                 self.assertEqual(tuple(resume), (7, "legacy-v1", "", "{}", "classic"))
                 self.assertEqual(
                     tuple(interview),
-                    (9, "standard_live", "live", "interview-standard-v1", "[]"),
+                    (9, "standard_live", "live", "interview-standard-v1", "[]", "standard"),
                 )
                 self.assertEqual(migration_count, 1)
             finally:

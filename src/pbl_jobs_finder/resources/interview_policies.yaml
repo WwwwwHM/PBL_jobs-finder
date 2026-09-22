@@ -2,6 +2,34 @@ policies:
   interview-standard-v1:
     version: interview-standard-v1
     label: 通用岗位结构化模拟面试
+    role_profiles:
+      ai_application:
+        position_patterns:
+          - '(?:AI|LLM|AIGC|大模型|人工智能)\s*(?:应用|开发|工程|智能体|agent)'
+          - '(?:智能体|agent)\s*(?:应用|开发|工程|developer|engineer)'
+          - '(?:AI|LLM)\s+(?:application|developer|engineer)'
+        jd_patterns:
+          - '(?:大模型|LLM|AI)\s*应用.{0,30}(?:开发|部署|构建)'
+          - '(?:开发|构建|搭建).{0,30}(?:RAG|智能体|大模型应用|AI\s*Agent)'
+        bank_positions:
+          - AI大模型应用开发工程师
+          - AI应用开发工程师
+          - AI应用开发
+          - 大模型应用开发工程师
+          - LLM应用开发工程师
+        focus_pattern: '\b(?:AI|LLM|RAG|Agent|Prompt|Embedding|Function\s*call\w*)\b|大模型|人工智能|智能体|提示词|知识库|模型调用|模型输出|模型服务|工具调用|检索增强|向量检索'
+        objectives:
+          experience_evidence: 优先选择简历中与 JD 最相关的 AI 应用或智能体项目，核验业务需求如何转化为模型调用流程及个人贡献；没有相关经历时问假设的 AI 应用场景，不从普通后端项目的缓存细节开场
+          role_core: 考察 JD 中的大模型应用核心能力，优先覆盖 RAG 或知识库的检索与生成链路；若 JD 未要求 RAG，则考察其明确要求的模型能力，不假定候选人已经实践
+          problem_solving: 考察 AI 应用的 Prompt 设计、结构化输出与效果评估，判断如何定位错误并验证改进，避免转成一般数据库或缓存调参
+          tradeoffs: 考察 AI Agent 或工具调用的适用边界、失败处理与权限约束，结合 JD 中的自动化或业务流程要求讨论方案取舍；未要求 Agent 时围绕模型 API 集成
+          reflection: 考察 AI 应用从原型到部署的可靠性、成本或延迟，以及如何用用户反馈验证业务价值；快速面试同时覆盖效果评估与部署
+        fallback_questions:
+          experience_evidence: 请选一个与你应聘岗位最相关的 AI 应用经历，说明你如何把业务需求转化为模型调用流程；没有相关经历时，可以用一个假设场景说明？
+          role_core: 假设要让大模型基于企业资料回答问题，你会如何组织知识检索与生成的流程？
+          problem_solving: 如果 AI 应用返回的内容不符合业务要求，你会如何定位问题并验证改进效果？
+          tradeoffs: 假设一个 AI 助手需要调用外部工具执行任务，你会如何控制失败重试与操作权限？
+          reflection: 一个 AI 应用从原型走向实际使用时，你会优先验证哪项指标，以判断它是否值得上线？
     modes:
       standard_live:
         label: 标准面试

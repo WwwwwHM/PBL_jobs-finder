@@ -209,6 +209,24 @@ class ChromaVectorStoreTests(unittest.TestCase):
         self.assertEqual(len(set(results)), 5)
         self.assertTrue(set(results).issubset(java_questions))
 
+    def test_ai_application_query_is_filtered_to_ai_question_bank(self) -> None:
+        questions = load_question_bank()
+        self.store.add_question_bank(questions)
+        results = self.store.search_for_interview(
+            position="AI应用开发",
+            job_description="负责 RAG、Agent、知识库和模型 API 应用开发",
+            resume_text="独立开发 AI 求职助手",
+            objective="考察 RAG 或知识库的检索与生成链路",
+            top_k=5,
+        )
+        self.assertTrue(results)
+        self.assertTrue(
+            all(
+                any(keyword in item for keyword in ("AI", "大模型", "智能体", "RAG", "Embedding", "知识库", "提示词", "提示注入"))
+                for item in results
+            )
+        )
+
     def test_empty_collection_limits_and_stable_plain_question_ids(self) -> None:
         self.assertEqual(self.store.search("Java 后端", top_k=5), [])
         with self.assertRaises(ValueError):

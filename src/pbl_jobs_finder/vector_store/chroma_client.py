@@ -13,6 +13,7 @@ from chromadb.config import Settings as ChromaSettings
 
 from pbl_jobs_finder.config import get_settings
 from pbl_jobs_finder.modules.question_bank import InterviewQuestion
+from pbl_jobs_finder.policies.interview_policy import get_interview_policy
 from pbl_jobs_finder.utils.embeddings import (
     MAX_EMBEDDING_BATCH_SIZE,
     EmbeddingProvider,
@@ -116,7 +117,7 @@ class ChromaVectorStore:
             )
         return len(documents)
 
-    def search(self, query: str, top_k: int = 5) -> list[str]:
+    def search(self, query: str, top_k: int = 5, *, where: dict | None = None) -> list[str]:
         normalized_query = query.strip() if isinstance(query, str) else ""
         if not normalized_query:
             raise ValueError("检索文本不能为空")
@@ -130,6 +131,7 @@ class ChromaVectorStore:
             query_embeddings=[query_embedding],
             n_results=min(top_k, available),
             include=["documents"],
+            **({"where": where} if where else {}),
         )
         nested_documents = result.get("documents") or []
         if not nested_documents:
@@ -143,13 +145,18 @@ class ChromaVectorStore:
         job_description: str = "",
         resume_text: str = "",
         top_k: int = 5,
+        objective: str = "",
     ) -> list[str]:
+        # Resume detail is used during question generation; it must not outweigh
+        # the target role when retrieving the initial question candidates.
         query = build_interview_query(
             position=position,
             job_description=job_description,
-            resume_text=resume_text,
+            objective=objective,
         )
-        return self.search(query, top_k=top_k)
+        profile = get_interview_policy().role_profile(position, job_description)
+        where = {"position": {"$in": profile.bank_positions}} if profile else None
+        return self.search(query, top_k=top_k, where=where)
 
     def search_reference_answers(
         self, question: str, top_k: int = 3
@@ -183,12 +190,14 @@ class ChromaVectorStore:
 
 
 def build_interview_query(
-    *, position: str, job_description: str = "", resume_text: str = ""
+    *, position: str, job_description: str = "", resume_text: str = "", objective: str = ""
 ) -> str:
     normalized_position = position.strip() if isinstance(position, str) else ""
     if not normalized_position:
         raise ValueError("目标岗位不能为空")
     parts = [f"目标岗位：{normalized_position}"]
+    if objective.strip():
+        parts.append(f"本轮考察目标：{objective.strip()[:600]}")
     if job_description.strip():
         parts.append(f"岗位描述：{job_description.strip()[:6000]}")
     if resume_text.strip():

@@ -44,8 +44,10 @@ from pbl_jobs_finder.modules.resume_templates import (
     get_resume_template,
 )
 from pbl_jobs_finder.policies.interview_policy import (
+    DEFAULT_DIFFICULTY,
     DEFAULT_FEEDBACK_MODE,
     DEFAULT_INTERVIEW_MODE,
+    DIFFICULTY_CHOICES,
     FEEDBACK_MODE_CHOICES,
     INTERVIEW_STANDARD_POLICY_VERSION,
     get_interview_mode_choices,
@@ -478,6 +480,7 @@ def start_interview_callback(
     token: str,
     mode: str = DEFAULT_INTERVIEW_MODE,
     feedback_mode: str = DEFAULT_FEEDBACK_MODE,
+    difficulty: str = DEFAULT_DIFFICULTY,
 ) -> tuple:
     """Create an interview session and display its first question."""
 
@@ -489,6 +492,7 @@ def start_interview_callback(
             resume_text=resume_text,
             mode=mode,
             feedback_mode=feedback_mode,
+            difficulty=difficulty,
         )
         remaining = quota_service.status(token).remaining
     except (
@@ -571,6 +575,7 @@ def submit_interview_answer_callback(
     session_id: int | str | None,
     token: str,
     expected_question: str,
+    skip: bool = False,
 ) -> tuple:
     """Evaluate an answer and display feedback plus the following question."""
 
@@ -580,6 +585,7 @@ def submit_interview_answer_callback(
             session_id=session_id,
             answer=answer,
             expected_question=expected_question,
+            **({"skip": True} if skip else {}),
         )
     except (
         AuthenticationError,
@@ -672,6 +678,20 @@ def submit_interview_answer_callback(
         outcome.next_question,
         status,
     )
+
+
+def skip_interview_question_callback(
+    answer: str, session_id: int | str | None, token: str, expected_question: str,
+) -> tuple:
+    return submit_interview_answer_callback(answer, session_id, token, expected_question, skip=True)
+
+
+def begin_interview_transition() -> tuple:
+    return gr.update(interactive=False), "正在准备下一步...", gr.update(interactive=False)
+
+
+def update_skip_button(question: str) -> dict:
+    return gr.update(interactive=bool(question))
 
 
 def _format_interview_report(report: InterviewReport) -> str:
@@ -1185,6 +1205,11 @@ def build_app() -> gr.Blocks:
                                 "使用当前优化稿",
                                 size="sm",
                             )
+                    interview_difficulty = gr.Radio(
+                        choices=list(DIFFICULTY_CHOICES),
+                        value=DEFAULT_DIFFICULTY,
+                        label="面试难度",
+                    )
                     with gr.Row(visible=interview_service.enable_modes):
                         interview_mode = gr.Radio(
                             choices=list(
@@ -1225,10 +1250,11 @@ def build_app() -> gr.Blocks:
                             max_lines=14,
                             max_length=6000,
                         )
-                        submit_answer_button = gr.Button(
-                            "提交回答",
-                            variant="primary",
-                        )
+                        with gr.Row():
+                            submit_answer_button = gr.Button(
+                                "提交回答", variant="primary",
+                            )
+                            skip_question_button = gr.Button("跳过本题", interactive=False)
                         interview_feedback = gr.Markdown()
 
                 with gr.Tab("📊 我的记录"), gr.Column(elem_classes="placeholder-panel"):
@@ -1466,6 +1492,7 @@ def build_app() -> gr.Blocks:
                 token_state,
                 interview_mode,
                 interview_feedback_mode,
+                interview_difficulty,
             ],
             outputs=[
                 interview_status,
@@ -1490,38 +1517,34 @@ def build_app() -> gr.Blocks:
             outputs=history_outputs,
             api_name=False,
         )
-        submit_answer_button.click(
-            begin_answer_submission,
-            outputs=[submit_answer_button, interview_feedback],
-            queue=False,
-            api_name=False,
-        ).then(
-            submit_interview_answer_callback,
-            inputs=[
-                interview_answer,
-                interview_session_state,
-                token_state,
-                interview_question_state,
-            ],
-            outputs=[
-                interview_feedback,
-                interview_answer,
-                submit_answer_button,
-                interview_progress,
-                interview_question,
-                interview_question_state,
-                interview_status,
-            ],
-            trigger_mode="once",
-            concurrency_limit=4,
-            concurrency_id="interview-answer",
-            api_name=False,
-        ).then(
-            load_history_callback,
-            inputs=token_state,
-            outputs=history_outputs,
-            api_name=False,
+        interview_question_state.change(
+            update_skip_button, inputs=interview_question_state,
+            outputs=skip_question_button, queue=False, api_name=False,
         )
+        for button, callback in (
+            (submit_answer_button, submit_interview_answer_callback),
+            (skip_question_button, skip_interview_question_callback),
+        ):
+            button.click(
+                begin_interview_transition,
+                outputs=[submit_answer_button, interview_feedback, skip_question_button],
+                queue=False, api_name=False,
+            ).then(
+                callback,
+                inputs=[interview_answer, interview_session_state, token_state, interview_question_state],
+                outputs=[
+                    interview_feedback, interview_answer, submit_answer_button,
+                    interview_progress, interview_question, interview_question_state, interview_status,
+                ],
+                trigger_mode="once", concurrency_limit=4,
+                concurrency_id="interview-answer", api_name=False,
+            ).then(
+                update_skip_button, inputs=interview_question_state,
+                outputs=skip_question_button, queue=False, api_name=False,
+            ).then(
+                load_history_callback, inputs=token_state,
+                outputs=history_outputs, api_name=False,
+            )
         restart_interview_button.click(
             clear_interview_workspace,
             outputs=[

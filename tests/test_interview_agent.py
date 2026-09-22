@@ -483,10 +483,10 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
         self.assertIsInstance(failures[0], InterviewValidationError)
         self.assertEqual(client.max_active_calls, 1)
 
-    def test_follow_ups_stay_on_round_and_fourth_answer_forces_next_main(self) -> None:
+    def test_standard_allows_one_follow_up_then_changes_competency(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")
         current_question = started.question
-        for expected_count in range(1, 4):
+        for expected_count in range(1, 2):
             self.client.response = json.dumps(
                 {
                     "feedback": "回答方向相关，但缺少实现细节和验证结果。请补充一个具体步骤。",
@@ -508,30 +508,258 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
 
         self.client.response = json.dumps(
             {
-                "feedback": "本题已完成三次追问，现有回答足以识别主要思路。后续应继续强化量化验证。",
+                "feedback": "本题已完成一次追问，现有回答足以识别主要思路。后续应继续强化量化验证。",
                 "needs_follow_up": True,
-                "next_question": "请设计一个高并发库存扣减方案并说明一致性取舍？",
+                "next_question": current_question,
             },
             ensure_ascii=False,
         )
         advanced = self.service.submit_answer(
             token="token-a",
             session_id=started.session_id,
-            answer="第四次回答补充了量化验证。",
+            answer="补充回答包含了量化验证。",
             expected_question=current_question,
         )
         self.assertFalse(advanced.is_follow_up)
         self.assertEqual(advanced.question_round, 2)
         self.assertEqual(advanced.follow_up_count, 0)
+        self.assertNotEqual(advanced.next_question, current_question)
+        self.assertIn("尚未讨论", advanced.next_question)
+
+    def test_difficulty_is_persisted_and_limits_follow_ups_without_modes_flag(
+        self,
+    ) -> None:
+        for difficulty, limit in (("beginner", 0), ("standard", 1), ("challenge", 2)):
+            with self.subTest(difficulty=difficulty):
+                self.client.response = "请介绍一次你亲自解决问题的经历以及具体行动？"
+                started = self.service.start(
+                    token="token-a", position="开发", difficulty=difficulty
+                )
+                self.assertEqual(started.max_follow_up_count, limit)
+                self.assertIn("【难度要求】", self.client.system_prompt)
+                with self.database.session() as session:
+                    saved = get_interview_session(session, started.session_id)
+                    self.assertEqual(saved.difficulty, difficulty)
+                    self.assertEqual(len(json.loads(saved.question_plan_json)), 5)
+                questions = (
+                    "你采取了哪一步行动来验证最初的猜测？",
+                    "如果系统资源减少一半，你会怎样调整方案？",
+                    "还有哪些潜在风险需要提前考虑和应对？",
+                )
+                current = started.question
+                for count in range(limit + 1):
+                    self.client.response = json.dumps(
+                        {
+                            "feedback": "回答已说明主要行动，可以进一步补充判断依据和验证过程。",
+                            "needs_follow_up": True,
+                            "next_question": questions[count],
+                        },
+                        ensure_ascii=False,
+                    )
+                    result = self.service.submit_answer(
+                        token="token-a",
+                        session_id=started.session_id,
+                        answer="我先收集证据再进行验证。",
+                        expected_question=current,
+                    )
+                    self.assertEqual(result.is_follow_up, count < limit)
+                    self.assertEqual(result.max_follow_up_count, limit)
+                    current = result.next_question
+
+    def test_invalid_difficulty_does_not_consume_quota(self) -> None:
+        with self.assertRaisesRegex(InterviewValidationError, "未知的面试难度"):
+            self.service.start(token="token-a", position="开发", difficulty="invalid")
+        self.assertEqual(self.quota.status("token-a").used, 0)
+
+    def test_skip_button_and_explicit_request_advance_without_evaluating_answer(
+        self,
+    ) -> None:
+        for answer, skip in (
+            ("", True),
+            ("别问这个问题了", False),
+            ("跳过这题", False),
+        ):
+            with self.subTest(answer=answer):
+                started = self.service.start(token="token-a", position="开发")
+                calls = self.client.calls
+                used = self.quota.status("token-a").used
+                result = self.service.submit_answer(
+                    token="token-a",
+                    session_id=started.session_id,
+                    answer=answer,
+                    expected_question=started.question,
+                    skip=skip,
+                )
+                self.assertEqual(result.question_round, 2)
+                self.assertFalse(result.is_follow_up)
+                self.assertEqual(self.client.calls, calls)
+                self.assertEqual(self.quota.status("token-a").used, used)
+                with self.database.session() as session:
+                    conversation = json.loads(
+                        get_interview_session(
+                            session, started.session_id
+                        ).conversation_json
+                    )
+                    self.assertEqual(conversation[1]["kind"], "skipped")
+
+    def test_skip_enforces_ownership_and_stale_question_checks(self) -> None:
+        started = self.service.start(token="token-a", position="开发")
+        with self.assertRaises(InterviewAccessError):
+            self.service.submit_answer(
+                token="token-b",
+                session_id=started.session_id,
+                answer="",
+                expected_question=started.question,
+                skip=True,
+            )
+        self.service.submit_answer(
+            token="token-a",
+            session_id=started.session_id,
+            answer="",
+            expected_question=started.question,
+            skip=True,
+        )
+        with self.assertRaisesRegex(InterviewValidationError, "问题已更新"):
+            self.service.submit_answer(
+                token="token-a",
+                session_id=started.session_id,
+                answer="",
+                expected_question=started.question,
+                skip=True,
+            )
+
+    def test_skip_final_question_generates_report_with_skipped_marker(self) -> None:
+        started = self.service.start(token="token-a", position="开发")
+        question = self._move_to_final_question(started.session_id)
+        self.client.response = self._report_json()
+        result = self.service.submit_answer(
+            token="token-a",
+            session_id=started.session_id,
+            answer="",
+            expected_question=question,
+            skip=True,
+        )
+        self.assertTrue(result.is_finished)
+        self.assertIsNotNone(result.report)
+        self.assertIn('"kind": "skipped"', self.client.user_prompt)
+        with self.database.session() as session:
+            saved = get_interview_session(session, started.session_id)
+            self.assertEqual(saved.status, "completed")
+            self.assertEqual(saved.current_question, "")
+
+    def test_declining_false_premise_does_not_trigger_more_follow_ups(self) -> None:
+        for answer in ("没有用到", "我不会", "这个问题我不知道"):
+            started = self.service.start(token="token-a", position="开发")
+            result = self.service.submit_answer(
+                token="token-a",
+                session_id=started.session_id,
+                answer=answer,
+                expected_question=started.question,
+            )
+            self.assertEqual(result.question_round, 2)
+            self.assertNotIn("回避", result.feedback)
+
+    def test_repeated_question_is_replaced_and_past_feedback_is_excluded(self) -> None:
+        started = self.service.start(
+            token="token-a", position="开发", difficulty="challenge"
+        )
+        with self.database.session() as session:
+            saved = get_interview_session(session, started.session_id)
+            conversation = json.loads(saved.conversation_json)
+            conversation.extend(
+                [
+                    {
+                        "role": "candidate",
+                        "kind": "answer",
+                        "round": 1,
+                        "content": "50MB，0~60 秒",
+                    },
+                    {
+                        "role": "interviewer",
+                        "kind": "feedback",
+                        "round": 1,
+                        "content": "错误反馈：没有给数值",
+                    },
+                ]
+            )
+            update_interview_session(
+                session, started.session_id, conversation=conversation
+            )
+        self.client.response = json.dumps(
+            {
+                "feedback": "你已经提供具体参数，建议进一步说明验证方法。",
+                "needs_follow_up": True,
+                "next_question": started.question,
+            },
+            ensure_ascii=False,
+        )
+        result = self.service.submit_answer(
+            token="token-a",
+            session_id=started.session_id,
+            answer="5分钟 TTL，maximumSize(1000)",
+            expected_question=started.question,
+        )
+        self.assertEqual(result.question_round, 2)
+        self.assertNotEqual(result.next_question, started.question)
+        self.assertIn("50MB", self.client.user_prompt)
+        self.assertNotIn("错误反馈", self.client.user_prompt)
+
+    def test_ai_role_replaces_irrelevant_model_question_with_ai_focus(self) -> None:
+        started = self.service.start(
+            token="token-a",
+            position="AI应用开发",
+            job_description="负责 RAG、Agent、Prompt 和知识库应用开发",
+        )
+        self.client.response = json.dumps(
+            {
+                "feedback": "已说明主要做法，后续可以继续补充验证依据。",
+                "needs_follow_up": False,
+                "next_question": "请说明 Redis 缓存击穿和雪崩如何处理？",
+            },
+            ensure_ascii=False,
+        )
+        result = self.service.submit_answer(
+            token="token-a",
+            session_id=started.session_id,
+            answer="我会先确认业务目标，再组织模型调用和输出校验。",
+            expected_question=started.question,
+        )
+        self.assertEqual(result.question_round, 2)
+        self.assertIn("大模型", result.next_question)
+        self.assertNotIn("Redis", result.next_question)
+
+    def test_skip_word_in_technical_answer_is_not_a_skip_command(self) -> None:
+        started = self.service.start(token="token-a", position="开发")
+        self.client.response = json.dumps(
+            {
+                "feedback": "说明了异常处理的做法，可以补充监控和重试的边界。",
+                "needs_follow_up": False,
+                "next_question": "请介绍你通常如何设计自动化测试来验证数据一致性？",
+            },
+            ensure_ascii=False,
+        )
+        self.service.submit_answer(
+            token="token-a",
+            session_id=started.session_id,
+            answer="我会跳过无效记录并将错误写入日志。",
+            expected_question=started.question,
+        )
+        with self.database.session() as session:
+            conversation = json.loads(
+                get_interview_session(session, started.session_id).conversation_json
+            )
+            self.assertEqual(conversation[1]["kind"], "answer")
 
     def test_fifth_main_question_completion_marks_session_completed(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")
         final_question = self._move_to_final_question(started.session_id)
-        self.store.reference_answers = [{
-            "question": final_question,
-            "reference_answer": "Collect evidence, mitigate, verify and review.",
-            "source": "bank.md",
-        }]
+        self.store.reference_answers = [
+            {
+                "question": final_question,
+                "reference_answer": "Collect evidence, mitigate, verify and review.",
+                "source": "bank.md",
+            }
+        ]
         self.client.responses = [
             json.dumps(
                 {

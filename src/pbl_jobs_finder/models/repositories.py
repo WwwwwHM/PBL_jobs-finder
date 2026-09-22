@@ -147,6 +147,7 @@ def create_interview_session(
     feedback_mode: str = "live",
     policy_version: str = "interview-standard-v1",
     question_plan: list[dict[str, Any]] | None = None,
+    difficulty: str = "standard",
 ) -> InterviewSession:
     get_or_create_user(session, phone)
     interview = InterviewSession(
@@ -158,6 +159,7 @@ def create_interview_session(
         feedback_mode=feedback_mode,
         policy_version=policy_version,
         question_plan_json=json.dumps(question_plan or [], ensure_ascii=False),
+        difficulty=difficulty,
     )
     session.add(interview)
     session.flush()

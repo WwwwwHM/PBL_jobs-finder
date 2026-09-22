@@ -77,6 +77,7 @@ class InterviewHistoryDetail:
     policy_version: str
     conversation: tuple[dict[str, Any], ...]
     report: dict[str, Any]
+    difficulty: str = "standard"
 
 
 class HistoryService:
@@ -183,6 +184,7 @@ class HistoryService:
                 policy_version=interview.policy_version,
                 conversation=_json_object_tuple(interview.conversation_json),
                 report=_json_object(interview.report),
+                difficulty=interview.difficulty,
             )
 
     def _require_user(self, token: str) -> dict[str, str]:

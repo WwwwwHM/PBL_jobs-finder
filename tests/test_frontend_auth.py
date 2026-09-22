@@ -320,6 +320,7 @@ class FrontendAuthTests(unittest.TestCase):
             resume_text="负责订单系统开发",
             mode="standard_live",
             feedback_mode="live",
+            difficulty="standard",
         )
         self.assertEqual(result[1], 23)
         self.assertEqual(result[2], "第 1 题 / 共 5 题")

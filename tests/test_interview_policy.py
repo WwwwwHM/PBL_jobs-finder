@@ -45,6 +45,21 @@ class InterviewPolicyTests(unittest.TestCase):
             (("标准面试", "standard_live"), ("快速面试", "focused_live")),
         )
 
+    def test_ai_application_role_profile_prioritizes_ai_competencies(self) -> None:
+        policy = get_interview_policy()
+        profile = policy.role_profile(
+            "AI应用开发",
+            "熟悉 Prompt Engineering、Agent、RAG、知识库和模型 API 调用",
+        )
+        self.assertIsNotNone(profile)
+        self.assertTrue(profile.accepts_question("请说明 RAG 的召回和生成如何评估？"))
+        self.assertFalse(profile.accepts_question("请说明 Redis 缓存击穿如何处理？"))
+        plan = policy.build_question_plan(
+            "standard_live", "AI应用开发", "熟悉 RAG、Agent 和模型 API 调用"
+        )
+        self.assertIn("AI 应用", plan[0]["fallback_question"])
+        self.assertIn("RAG", plan[1]["objective"])
+
 
 if __name__ == "__main__":
     unittest.main()

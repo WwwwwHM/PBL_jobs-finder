@@ -133,11 +133,13 @@ def format_interview_history_detail(detail: InterviewHistoryDetail) -> str:
     """Render an interview transcript and report from persisted data."""
 
     feedback_labels = {"live": "即时反馈", "deferred": "面试后反馈"}
+    difficulty_labels = {"beginner": "入门", "standard": "标准", "challenge": "挑战"}
     transcript: list[str] = []
     kind_labels = {
         "main_question": "面试官",
         "follow_up": "面试官追问",
         "answer": "你的回答",
+        "skipped": "已跳过",
         "feedback": "AI 反馈",
     }
     for item in detail.conversation:
@@ -198,6 +200,7 @@ def format_interview_history_detail(detail: InterviewHistoryDetail) -> str:
 **目标岗位：** {_text(detail.position)}<br>
 **状态：** {HISTORY_STATUS_LABELS.get(detail.status, "状态异常")}<br>
 **面试节奏：** {_text(_interview_mode_label(detail))}<br>
+**面试难度：** {difficulty_labels.get(detail.difficulty, _text(detail.difficulty))}<br>
 **反馈方式：** {feedback_labels.get(detail.feedback_mode, _text(detail.feedback_mode))}<br>
 **策略版本：** {_text(detail.policy_version)}
 

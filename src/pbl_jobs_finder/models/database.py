@@ -67,6 +67,7 @@ class Database:
                 ),
             },
             "interview_sessions": {
+                "difficulty": "difficulty VARCHAR(16) NOT NULL DEFAULT 'standard'",
                 "mode": "mode VARCHAR(32) NOT NULL DEFAULT 'standard_live'",
                 "feedback_mode": (
                     "feedback_mode VARCHAR(16) NOT NULL DEFAULT 'live'"
@@ -102,6 +103,10 @@ class Database:
                     "VALUES (:version)"
                 ),
                 {"version": migration_version},
+            )
+            connection.execute(
+                text("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:version)"),
+                {"version": "2026-09-22-interview-difficulty"},
             )
 
     @contextmanager
