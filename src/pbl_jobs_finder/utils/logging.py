@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -24,6 +25,29 @@ _CREDENTIAL_PATTERN = re.compile(
     r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|"
     r"authorization)(\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;]+)"
 )
+
+
+class _RetryingTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Keep writing when Windows temporarily prevents log rotation."""
+
+    _rollover_retry_at = 0.0
+
+    def shouldRollover(self, record: logging.LogRecord) -> bool:
+        if time.monotonic() < self._rollover_retry_at:
+            return False
+        return super().shouldRollover(record)
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in (32, 33):
+                raise
+            # Preserve rolloverAt so the eventual archive keeps its original date.
+            # FileHandler.emit reopens app.log and appends the pending record.
+            self._rollover_retry_at = time.monotonic() + 60
+        else:
+            self._rollover_retry_at = 0.0
 
 
 class _SafeFormatter(logging.Formatter):
@@ -120,7 +144,7 @@ def configure_logging(
     console_handler.setFormatter(formatter)
     _mark_managed(console_handler, signature)
 
-    file_handler = TimedRotatingFileHandler(
+    file_handler = _RetryingTimedRotatingFileHandler(
         log_path,
         when="midnight",
         interval=1,
