@@ -83,7 +83,7 @@ def wait_until(check, timeout: float = 30) -> None:
     raise RuntimeError("Acceptance condition timed out")
 
 
-def run(live: bool, output: Path) -> dict:
+def run(live: bool, output: Path, *, rollback: bool = False) -> dict:
     from playwright.sync_api import expect, sync_playwright
     from redis import Redis
 
@@ -97,10 +97,14 @@ def run(live: bool, output: Path) -> dict:
     with TemporaryDirectory(prefix="pbl-browser-") as directory:
         root = Path(directory)
         redis_port, app_port = free_port(), free_port()
-        redis = subprocess.Popen(
-            [shutil.which("redis-server"), "--bind", "127.0.0.1", "--port", str(redis_port),
-             "--save", "", "--appendonly", "yes", "--appendfsync", "always", "--dir", str(root)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        redis_directory = root / "redis"
+        redis_directory.mkdir()
+        def start_redis(directory):
+            return subprocess.Popen(
+                [shutil.which("redis-server"), "--bind", "127.0.0.1", "--port", str(redis_port),
+                 "--save", "", "--appendonly", "yes", "--appendfsync", "always", "--dir", str(directory)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        redis = start_redis(redis_directory)
         client = Redis(host="127.0.0.1", port=redis_port, decode_responses=True)
         app = None
         base = f"http://127.0.0.1:{app_port}"
@@ -110,7 +114,8 @@ def run(live: bool, output: Path) -> dict:
                    REDIS_PREFIX="browser:", GRADIO_TEMP_DIR=str(root / "gradio"),
                    GRADIO_ANALYTICS_ENABLED="False", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1",
                    ENABLE_RESUME_DIMENSIONS="False", ENABLE_INTERVIEW_MODES="False",
-                   PLAYWRIGHT_BROWSERS_PATH=str(ROOT / ".playwright-browsers"))
+                   PLAYWRIGHT_BROWSERS_PATH=os.environ.get(
+                       "PLAYWRIGHT_BROWSERS_PATH", str(ROOT / ".playwright-browsers")))
         if live:
             shutil.copytree(settings.chroma_dir, root / "chroma")
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(ROOT / ".playwright-browsers"))
@@ -214,6 +219,74 @@ def run(live: bool, output: Path) -> dict:
                     assert requests.get(base + "/api/quota", headers=headers, timeout=5).json()["used"] == 2
                     assert requests.get(base + "/api/history", headers=headers, timeout=5).json() == history
                     assert requests.get(base + download_url, headers=headers, timeout=5).status_code == 200
+                    if rollback:
+                        from pbl_jobs_finder.modules.redis_state import RedisState
+                        from scripts.check_rollback import (
+                            chroma_probe,
+                            copy_snapshot,
+                            file_manifest,
+                            mutate_business_data,
+                        )
+
+                        detail_urls = [
+                            f"/api/history/resumes/{history['resumes'][0]['record_id']}",
+                            f"/api/history/interviews/{history['interviews'][0]['session_id']}",
+                        ]
+                        details = [requests.get(base + url, headers=headers, timeout=5).json()
+                                   for url in detail_urls]
+                        pdf = requests.get(base + download_url, headers=headers, timeout=5).content
+                        quota = requests.get(base + "/api/quota", headers=headers, timeout=5).json()
+                        # Stop ingress and every writer before taking the common checkpoint.
+                        app.terminate()
+                        app.wait(timeout=20)
+                        client.shutdown(nosave=True)
+                        redis.wait(timeout=10)
+                        vectors = chroma_probe(root / "chroma")
+                        snapshot = root / "snapshot"
+                        for name in ("data", "chroma", "redis"):
+                            copy_snapshot(root / name, snapshot / name)
+                        manifest = file_manifest(snapshot)
+                        # Prove all four stores changed after the checkpoint.
+                        mutate_business_data(root / "data")
+                        changed = chroma_probe(root / "chroma", mutate=True)
+                        assert changed["after_count"] == vectors["count"] - 1
+                        redis = start_redis(redis_directory)
+                        wait_until(client.ping)
+                        state = RedisState(client, "browser:")
+                        state.reserve_quota("13900000028", quota["day"], 10)
+                        assert state.quota_used("13900000028", quota["day"]) == 3
+                        assert state.revoke_token(token)
+                        assert state.token_phone(token) is None
+                        client.shutdown(nosave=True)
+                        redis.wait(timeout=10)
+                        # Restore to fresh directories; keep both checkpoint and failed state.
+                        restored = root / "restored"
+                        copy_snapshot(snapshot, restored)
+                        assert file_manifest(snapshot) == manifest
+                        assert chroma_probe(restored / "chroma") == vectors
+                        env.update(DATA_DIR=str(restored / "data"),
+                                   CHROMA_DIR=str(restored / "chroma"))
+                        redis = start_redis(restored / "redis")
+                        wait_until(client.ping)
+                        app = start_app()
+                        page.reload()
+                        expect(page.get_by_role("button", name="退出登录")).to_be_visible()
+                        assert requests.get(base + "/health/live", timeout=5).status_code == 200
+                        assert requests.get(base + "/health/ready", timeout=5).status_code == 200
+                        assert requests.get(base + "/api/history", headers=headers, timeout=5).json() == history
+                        assert requests.get(base + "/api/quota", headers=headers, timeout=5).json() == quota
+                        for url, detail in zip(detail_urls, details, strict=True):
+                            assert requests.get(base + url, headers=headers, timeout=5).json() == detail
+                        assert requests.get(base + download_url, headers=headers, timeout=5).content == pdf
+                        page.screenshot(path=str(output / "rollback.png"), full_page=True)
+                        metrics["rollback"] = {
+                            "passed": True, "stores": ["sqlite", "redis", "chroma", "exports"],
+                            "checkpoint_files": len(manifest), "question_count": vectors["count"],
+                            "vector_query_results": vectors["query_results"],
+                            "post_checkpoint_changes_discarded": True,
+                            "history_details_equal": True, "pdf_bytes_equal": True,
+                            "login_and_quota_restored": True,
+                        }
                     page.get_by_role("button", name="退出登录").click()
                     expect(page.get_by_role("button", name="登录", exact=True)).to_be_visible()
                     assert requests.get(base + "/api/history", headers=headers, timeout=5).status_code == 401
@@ -235,12 +308,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serve", type=int)
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--rollback", action="store_true",
+                        help="also restore a stopped-writer snapshot of all four stores")
     parser.add_argument("--output", type=Path, default=ROOT / "tmp" / "browser-2026-09-28")
     args = parser.parse_args()
     if args.serve:
         serve(args.serve, args.live)
     else:
-        print(json.dumps(run(args.live, args.output.resolve()), indent=2))
+        print(json.dumps(run(args.live, args.output.resolve(), rollback=args.rollback), indent=2))
 
 
 if __name__ == "__main__":
