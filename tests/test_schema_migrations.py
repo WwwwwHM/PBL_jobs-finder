@@ -12,6 +12,35 @@ from pbl_jobs_finder.models.database import Database
 
 
 class SchemaMigrationTests(unittest.TestCase):
+    def test_legacy_user_keeps_identity_and_gains_nullable_password(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(f"sqlite:///{Path(directory).as_posix()}/legacy-users.db")
+            try:
+                with db.engine.begin() as connection:
+                    connection.execute(text(
+                        "CREATE TABLE users (phone VARCHAR(11) PRIMARY KEY, "
+                        "nickname VARCHAR(50) NOT NULL, total_usage INTEGER NOT NULL, "
+                        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                        "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+                    ))
+                    connection.execute(text(
+                        "INSERT INTO users (phone, nickname, total_usage) "
+                        "VALUES ('13800138000', '老用户', 7)"
+                    ))
+                db.initialize()
+                db.initialize()
+                with db.engine.connect() as connection:
+                    row = connection.execute(text(
+                        "SELECT phone, nickname, total_usage, password_hash FROM users"
+                    )).one()
+                    self.assertEqual(tuple(row), ("13800138000", "老用户", 7, None))
+                    self.assertEqual(connection.execute(text(
+                        "SELECT COUNT(*) FROM schema_migrations "
+                        "WHERE version = '2026-09-28-password-auth'"
+                    )).scalar_one(), 1)
+            finally:
+                db.dispose()
+
     def test_existing_sqlite_tables_are_upgraded_without_losing_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "legacy.db"

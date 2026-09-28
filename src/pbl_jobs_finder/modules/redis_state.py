@@ -55,6 +55,18 @@ class RedisState:
         """, 2, self._key("code", phone), self._key("attempts", phone),
             hashlib.sha256(code.encode()).hexdigest()))
 
+    def reserve_password_attempt(self, phone: str) -> bool:
+        return bool(self._call("eval", """
+            local attempts = tonumber(redis.call('GET', KEYS[1]) or '0')
+            if attempts >= 5 then return 0 end
+            redis.call('INCR', KEYS[1])
+            if attempts == 0 then redis.call('EXPIRE', KEYS[1], 900) end
+            return 1
+        """, 1, self._key("password-attempts", phone)))
+
+    def clear_password_attempts(self, phone: str) -> None:
+        self._call("delete", self._key("password-attempts", phone))
+
     def issue_token(self, phone: str, candidate: str) -> str:
         return str(self._call("eval", """
             local existing = redis.call('GET', KEYS[1])

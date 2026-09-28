@@ -2,8 +2,11 @@
 
 from pbl_jobs_finder.modules.auth import (
     AuthService,
+    login_password,
+    register,
     revoke_token,
     send_verification_code,
+    set_password,
     verify_login,
     verify_token,
 )
@@ -99,11 +102,14 @@ __all__ = [
     "generate_resume_with_supplement",
     "get_resume_template",
     "history_service",
+    "login_password",
     "optimize_resume",
     "quota_service",
+    "register",
     "render_resume_html",
     "revoke_token",
     "send_verification_code",
+    "set_password",
     "verify_login",
     "verify_token",
 ]

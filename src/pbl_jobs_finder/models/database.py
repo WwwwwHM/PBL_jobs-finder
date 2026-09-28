@@ -56,6 +56,7 @@ class Database:
     def _apply_sqlite_migrations(self) -> None:
         migration_version = "2026-09-21-m1-policy-metadata"
         required_columns = {
+            "users": {"password_hash": "password_hash VARCHAR(256)"},
             "resume_records": {
                 "photo_data_uri": "photo_data_uri TEXT NOT NULL DEFAULT ''",
                 "policy_version": (
@@ -112,6 +113,10 @@ class Database:
             connection.execute(
                 text("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:version)"),
                 {"version": "2026-09-23-resume-photo"},
+            )
+            connection.execute(
+                text("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:version)"),
+                {"version": "2026-09-28-password-auth"},
             )
             for table_name in ("resume_records", "interview_sessions"):
                 columns = {item["name"] for item in inspect(connection).get_columns(table_name)}

@@ -35,6 +35,34 @@ from pbl_jobs_finder.modules.resume_pdf import (
 
 
 class FrontendAuthTests(unittest.TestCase):
+    def test_password_login_and_register_restore_session_and_clear_secrets(self):
+        restored = ({"visible": False}, {"visible": True}, "", "user", "quota", "token", "token")
+        with (
+            patch.object(frontend, "login_password", return_value=Message.success("登录成功", data="token")) as login,
+            patch.object(frontend, "register", return_value=Message.success("注册成功", data="token")) as register,
+            patch.object(frontend, "restore_login", return_value=restored),
+        ):
+            self.assertEqual(frontend.password_login_callback("13800138000", "Password123 "), (*restored, ""))
+            self.assertEqual(frontend.register_callback("13800138000", "Password123", "Password123"), (*restored, "", ""))
+        login.assert_called_once_with("13800138000", "Password123 ")
+        register.assert_called_once_with("13800138000", "Password123", "Password123")
+
+    def test_password_callbacks_fail_closed_and_clear_secrets(self):
+        with patch.object(frontend, "login_password", return_value=Message.failure("手机号或密码错误")):
+            result = frontend.password_login_callback("13800138000", "Wrong123")
+        self.assertTrue(result[0]["visible"])
+        self.assertFalse(result[1]["visible"])
+        self.assertEqual(result[5:], ("", "", ""))
+        with patch.object(frontend, "register", return_value=Message.failure("两次输入的密码不一致")):
+            result = frontend.register_callback("13800138000", "Password123", "Mismatch123")
+        self.assertIn("不一致", result[2])
+        self.assertEqual(result[5:], ("", "", "", ""))
+        with patch.object(frontend, "set_password", return_value=Message.failure("登录已失效")) as setting:
+            result = frontend.set_password_callback("bad-token", "Password123", "Password123")
+        setting.assert_called_once_with("bad-token", "Password123", "Password123")
+        self.assertEqual(result, ("登录已失效", "", ""))
+        self.assertEqual(frontend.clear_password_fields(), ("", "", "", "", "", ""))
+
     def test_login_stores_verified_token_in_state_and_browser_bridge(self) -> None:
         with (
             patch.object(
@@ -113,6 +141,10 @@ class FrontendAuthTests(unittest.TestCase):
         self.assertTrue(
             {
                 frontend.diagnose_resume_callback,
+                frontend.password_login_callback,
+                frontend.register_callback,
+                frontend.set_password_callback,
+                frontend.clear_password_fields,
                 frontend.generate_resume_callback,
                 frontend.start_interview_callback,
                 frontend.submit_interview_answer_callback,

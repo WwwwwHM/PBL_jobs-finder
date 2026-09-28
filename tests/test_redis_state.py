@@ -88,6 +88,20 @@ class RedisIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.state = RedisState(self.client, f"test:{uuid4().hex}:")
 
+    def test_password_attempts_are_atomic_shared_and_expire(self):
+        phone = "13800138000"
+        other = RedisState(self.client, self.state.prefix)
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(lambda _: other.reserve_password_attempt(phone), range(10)))
+        self.assertEqual(sum(results), 5)
+        key = self.state._key("password-attempts", phone)
+        self.assertGreater(self.client.ttl(key), 890)
+        self.assertLessEqual(self.client.ttl(key), 900)
+        self.state.clear_password_attempts(phone)
+        self.assertTrue(other.reserve_password_attempt(phone))
+        self.client.expire(key, 0)
+        self.assertTrue(other.reserve_password_attempt(phone))
+
     def test_real_redis_restart_aof_and_application_process_restart(self):
         phone = "13800138000"
         self.state.send_code(phone, "123456")

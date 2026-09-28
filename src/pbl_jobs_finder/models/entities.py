@@ -40,6 +40,7 @@ class User(TimestampMixin, Base):
     phone: Mapped[str] = mapped_column(String(11), primary_key=True)
     nickname: Mapped[str] = mapped_column(String(50), default="求职者", nullable=False)
     total_usage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     resume_records: Mapped[list[ResumeRecord]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

@@ -149,6 +149,7 @@ def run(live: bool, output: Path, *, rollback: bool = False) -> dict:
                     page = context.new_page()
                     page.set_default_timeout(180000 if live else 30000)
                     page.goto(base)
+                    page.get_by_role("tab", name="验证码登录", exact=True).click()
                     expect(page.get_by_role("button", name="登录", exact=True)).to_be_visible()
                     page.get_by_label("手机号", exact=True).fill("13900000028")
                     page.get_by_role("button", name="获取验证码").click()

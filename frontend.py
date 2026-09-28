@@ -25,8 +25,11 @@ from pbl_jobs_finder.exceptions import (
     ResumeValidationError,
 )
 from pbl_jobs_finder.modules.auth import (
+    login_password,
+    register,
     revoke_token,
     send_verification_code,
+    set_password,
     verify_login,
     verify_token,
 )
@@ -122,6 +125,39 @@ def _logged_out(message: str = "") -> tuple:
         "",
         "",
     )
+
+
+def password_login_callback(phone: str, password: str) -> tuple:
+    try:
+        result = login_password(phone, password)
+        response = restore_login(result.data) if result.success and result.data else _logged_out(result.message)
+    except Exception as exc:
+        error_id = report_exception(logger, "auth.password_login", exc)
+        response = _logged_out(f"登录失败，请稍后重试（错误编号：{error_id}）")
+    return (*response, "")
+
+
+def register_callback(phone: str, password: str, confirmation: str) -> tuple:
+    try:
+        result = register(phone, password, confirmation)
+        response = restore_login(result.data) if result.success and result.data else _logged_out(result.message)
+    except Exception as exc:
+        error_id = report_exception(logger, "auth.register", exc)
+        response = _logged_out(f"注册失败，请稍后重试（错误编号：{error_id}）")
+    return (*response, "", "")
+
+
+def set_password_callback(token: str, password: str, confirmation: str) -> tuple:
+    try:
+        message = set_password(token, password, confirmation).message
+    except Exception as exc:
+        error_id = report_exception(logger, "auth.set_password", exc)
+        message = f"密码设置失败，请稍后重试（错误编号：{error_id}）"
+    return message, "", ""
+
+
+def clear_password_fields() -> tuple:
+    return "", "", "", "", "", ""
 
 
 def restore_login(token: str) -> tuple:
@@ -1058,18 +1094,26 @@ def build_app() -> gr.Blocks:
                 placeholder="请输入 11 位手机号",
                 max_lines=1,
             )
-            with gr.Row():
-                code = gr.Textbox(
-                    label="验证码",
-                    placeholder="6 位数字",
-                    max_lines=1,
-                    scale=2,
-                )
-                send_code = gr.Button("获取验证码", scale=1)
+            with gr.Tabs():
+                with gr.Tab("密码登录"):
+                    password = gr.Textbox(label="密码", type="password", max_lines=1)
+                    password_login_button = gr.Button("密码登录", variant="primary")
+                    gr.Markdown("尚未设置密码？请先使用验证码登录，再在「账号设置」中设置密码。")
+                with gr.Tab("验证码登录"):
+                    with gr.Row():
+                        code = gr.Textbox(
+                            label="验证码", placeholder="6 位数字", max_lines=1, scale=2,
+                        )
+                        send_code = gr.Button("获取验证码", scale=1)
+                    login_button = gr.Button(
+                        "登录", variant="primary", elem_classes="primary-button"
+                    )
+                with gr.Tab("注册账号"):
+                    gr.Markdown("使用上方手机号注册。密码需为 8–128 个字符，且包含字母和数字。")
+                    register_password = gr.Textbox(label="设置密码", type="password", max_lines=1)
+                    register_confirmation = gr.Textbox(label="确认密码", type="password", max_lines=1)
+                    register_button = gr.Button("注册并登录", variant="primary")
             auth_status = gr.Markdown()
-            login_button = gr.Button(
-                "登录", variant="primary", elem_classes="primary-button"
-            )
 
         with gr.Column(visible=False, elem_id="app_view") as app_view:
             with gr.Row(elem_classes="app-header"):
@@ -1082,6 +1126,13 @@ def build_app() -> gr.Blocks:
                 user_label = gr.Markdown(elem_classes="user-label")
                 quota_label = gr.Markdown(elem_classes="user-label")
                 logout_button = gr.Button("退出登录", size="sm", scale=1)
+
+            with gr.Accordion("账号设置 · 设置登录密码", open=False):
+                gr.Markdown("验证码账号可在此设置首次登录密码。密码需为 8–128 个字符，且包含字母和数字。")
+                account_password = gr.Textbox(label="新密码", type="password", max_lines=1)
+                account_confirmation = gr.Textbox(label="确认新密码", type="password", max_lines=1)
+                set_password_button = gr.Button("设置密码")
+                password_status = gr.Markdown()
 
             with gr.Tabs():
                 with gr.Tab("📄 简历诊断"), gr.Column(elem_classes="placeholder-panel"):
@@ -1318,6 +1369,32 @@ def build_app() -> gr.Blocks:
             history_status,
             history_detail,
         ]
+        password_fields = [
+            password, register_password, register_confirmation,
+            account_password, account_confirmation, password_status,
+        ]
+        set_password_button.click(
+            set_password_callback,
+            inputs=[token_state, account_password, account_confirmation],
+            outputs=[password_status, account_password, account_confirmation],
+            api_name=False,
+        )
+        for trigger, callback, inputs, cleared_fields in (
+            (password_login_button.click, password_login_callback, [phone, password], [password]),
+            (password.submit, password_login_callback, [phone, password], [password]),
+            (register_button.click, register_callback,
+             [phone, register_password, register_confirmation],
+             [register_password, register_confirmation]),
+        ):
+            trigger(
+                callback, inputs=inputs, outputs=[*auth_outputs, *cleared_fields], api_name=False,
+            ).then(
+                fn=None, inputs=browser_token, outputs=browser_token, js=WRITE_TOKEN_JS,
+            ).then(
+                load_history_callback, inputs=token_state, outputs=history_outputs, api_name=False,
+            ).then(
+                clear_password_fields, outputs=password_fields, api_name=False,
+            )
         login_button.click(
             login,
             inputs=[phone, code],
@@ -1333,6 +1410,8 @@ def build_app() -> gr.Blocks:
             inputs=token_state,
             outputs=history_outputs,
             api_name=False,
+        ).then(
+            clear_password_fields, outputs=password_fields, api_name=False,
         )
         logout_button.click(
             logout,
@@ -1386,6 +1465,8 @@ def build_app() -> gr.Blocks:
             clear_history_workspace,
             outputs=history_outputs,
             api_name=False,
+        ).then(
+            clear_password_fields, outputs=password_fields, api_name=False,
         )
         app.load(
             restore_login,

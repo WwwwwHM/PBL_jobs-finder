@@ -185,7 +185,8 @@ class DataStorageTests(unittest.TestCase):
             versions = connection.execute(
                 text("SELECT version FROM schema_migrations")
             ).all()
-            self.assertEqual(len(versions), 3)
+            self.assertEqual(len(versions), 4)
+            self.assertIn("2026-09-28-password-auth", {row[0] for row in versions})
 
     def test_repository_queries_use_composite_indexes_without_temporary_sort(self):
         for database in (
