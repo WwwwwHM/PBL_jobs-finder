@@ -1,5 +1,71 @@
 # 系统工程化验收记录
 
+## 2026-09-28：提前完成 9/29—9/30 排期
+
+结论：**本机部署交付、真实浏览器最终演示与停写后的跨存储回滚已通过**。9/29 和 9/30 必须完成项均已验收；Docker / 远端部署按排期的条件项记录为未验证。实际执行日为 9/28，目录中的 9/30 表示计划交付日。
+
+代码版本：`eed25a8`（基于 `7b2b926`）。本节及两天排期记录在随后文档提交中交付；该文档提交的父提交为上述代码版本，可用 `git log --oneline -2` 核对。没有提交或删除接手时已有的 `AI_interview_QA.md` 本地修改、求职资料、输出文件和录屏。
+
+### 9/29：部署验证与资料
+
+| 项目 | 结果 |
+| --- | --- |
+| 实测环境 | Windows、Python 3.11.9、uv 0.12.2；宿主 Ruff 0.12.0；本机 Redis 3.0.504、AOF always；Playwright 1.47.0 / Chromium 1134，复用项目内浏览器运行时 |
+| 干净安装 | 86 个源码/测试/配置文件复制到独立目录，**不复制 `.env` 和日常数据**；新建虚拟环境，`uv sync --locked --offline` 安装 128 包，10.193 秒；源文件 SHA256 清单随证据保存 |
+| 依赖 | 25 项直接依赖声明、锁文件、安装版本一致；128 个包兼容检查通过；`uv lock --check --offline` 通过，锁文件无改动 |
+| 初始化 | 新 SQLite 连续初始化两次；真实 Embedding 导入两次，均为 42 条且总数仍为 42（14.931 / 6.081 秒），证明幂等 |
+| 发布预检 | **9/9 PASS**：Python、5 类可写目录、4 张表、题库源、Redis、Key 配置、向量题库、Chromium 和 Gradio 构建 |
+| HTTP 部署 | 新环境实际启动 Uvicorn factory 单 worker；首页、`/health/live`、`/health/ready` 返回 200，无身份 `/api/history` 返回 401 |
+| 全量回归 | 新环境 **242/242 通过、0 跳过、0 失败，24.420 秒**，包括真实 Redis 与两项 Chromium 集成；原开发环境亦 242/242 通过，28.646 秒 |
+| 文档 | 修正缺失项目包安装的旧说明；统一锁定安装；补充 HTTP 接口、Cookie/Token 区别、错误格式、Compose 初始化、备份恢复及演示手册 |
+| Docker | 未找到 PATH 中 Docker 或常见安装路径中的 Docker Desktop；Dockerfile 改为按 `uv.lock` 安装，但镜像构建、Linux 依赖/字体/卷权限未验证 |
+| 远端 | 未提供服务器/虚拟机地址和部署凭据；未执行远端部署 |
+
+安装使用预先联网填充的依赖缓存，不复用任何已有虚拟环境。第一次源副本验收的题库调用被沙箱网络限制阻止，保留失败记录；获准联网后在另一个全新输出目录完整重跑并通过。两次均只使用隔离数据。源码副本来自当前候选工作区，而非干净 Git checkout；包含用户自定义题库文件，但本轮初始化和实际查询只使用内置 42 条 JSON 种子题，不把自定义题库修改纳入发布提交或验收范围。
+
+### 9/30：最终演示与回滚
+
+| 项目 | 结果 |
+| --- | --- |
+| 固定数据浏览器 | PDF 上传、登录、诊断、PDF 下载、5 题面试、报告、历史、应用重启、四存储回滚、退出全部通过；模型与 Embedding 固定，其他组件真实运行 |
+| 真实浏览器 | 在上述全新安装环境完成同一闭环；使用合成履历与真实 LLM/Embedding，诊断 **25.072 秒**、PDF **19.124 秒**、首题 **3.997 秒**、5 次回答及报告 **63.467 秒** |
+| 配额与持久化 | 诊断、新面试合计扣 2 次；应用进程实际终止重启后，浏览器恢复登录、历史不变、配额仍为 2、旧 PDF 可下载 |
+| 停写快照 | 停止应用及 Chroma 写入者，正常关闭隔离 Redis；成组备份 SQLite、Chroma、Redis AOF 和导出，11 个文件逐文件校验 |
+| 故障后变更 | 实际修改 SQLite 分数/面试状态、删除 PDF、删除一条向量题、配额从 2 加至 3 并撤销 Token；全部变更均有断言核对 |
+| 独立恢复 | 快照复制到新目录并校验全部文件；42 条题库文档/元数据/向量摘要一致，真实 top 5 查询通过；切换应用路径与 Redis 恢复目录后重新启动 |
+| 恢复结果 | 登录及配额恢复；历史摘要及两类详情相等；PDF 字节完全一致；快照后的模拟故障变更已丢弃；健康接口 200 |
+| 退出隔离 | 最终退出后，旧 Token 查询历史和下载 PDF 均为 401；跨用户隔离由全量 API/业务回归验证 |
+| 页面检查 | 已查看真实诊断/PDF 页面及面试报告截图，主要内容、按钮和报告正常显示；用户主观体验及现场人工演示不代替为自动确认 |
+
+本轮真实演示是一条合成样本，不替代 9/28 已通过的 5 次诊断 + 10 次面试首轮性能门禁。63.467 秒是 5 次回答及报告的合计，不是单轮延迟。没有发现阻塞这条完整演示的缺陷，未新增业务逻辑变更。
+
+回滚证明同一候选代码下、维护窗口停写的四类存储恢复；不是在线原子快照，不承诺跨版本数据库降级，也不证明 Redis 7 / everysec 断电零丢失。恢复的登录态遵循原 TTL；生产恢复是否统一撤销旧 Token 需按部署策略执行。完整流程见 [发布、恢复与演示手册](release_runbook.md)。
+
+### 本次交付与复现证据
+
+```powershell
+uv sync --locked --python 3.11 --cache-dir .uv-cache
+$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\.playwright-browsers"
+.\.venv\Scripts\python.exe -m scripts.check_clean_deployment --live --output tmp/clean-release-new
+.\.venv\Scripts\python.exe -m scripts.check_browser_flow --rollback --output tmp/rollback-fixed-new
+ruff check .
+uv lock --check --offline --cache-dir .uv-cache
+```
+
+一体化命令需要两项 API Key、可访问外部模型的网络和 `redis-server`；输出目录必须尚不存在。真实服务调用产生费用，使用本机现有配置。脚本把 Key 传入子进程，不复制密钥文件，不打印密钥。
+
+- 成功一体化汇总：`tmp/clean-deployment-final-2026-09-30/result.json`。
+- 新环境分阶段日志与源码清单：同目录 `install.log`、`dependencies.log`、`pip-check.log`、`question-import-1.log`、`question-import-2.log`、`preflight.log`、`tests.log`、`server.log`、`source-manifest.json`。
+- 真实浏览器与回滚：同目录 `browser/result.json` 以及 `upload.png`、`resume.png`、`report.png`、`history.png`、`rollback.png`。
+- 固定浏览器与回滚：`tmp/browser-final-fixed-2026-09-30/result.json`；开发环境回归：`tmp/acceptance-2026-09-30.log`。
+- 初次沙箱网络失败证据：`tmp/clean-deployment-2026-09-30/`。不计作成功证据。
+
+`tmp/` 中日志、合成资料截图和隔离部署数据均不提交 Git。正式交付代码与文档按模块提交；交付范围包括 README、部署说明、API、恢复与演示手册、两天排期及本验收记录。
+
+仍存在的已知限制：单 worker、Mock 验证码、Redis 退款失败无自动补偿、24 小时导出、历史无自助永久删除、Docker/服务器运行未验证。后续顺序见手册，不列为已完成的生产能力。
+
+以下是先前验收快照；后续待办状态以上节结果为准。
+
 ## 2026-09-28：执行 9/25—9/28 排期
 
 结论：四个执行包已完成，242 项自动化测试全部通过（0 失败、0 跳过，23.993 秒），固定数据与真实模型的浏览器闭环均通过。此次为既有未提交工作区上的增量验收，没有整理或提交原有暂存区；9/29 干净安装、容器部署和 9/30 跨存储回滚尚未执行。

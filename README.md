@@ -1,8 +1,10 @@
 # AI 求职助手 MVP
 
-基于 Gradio 的求职辅助应用，规划提供手机号登录、简历诊断、模拟面试和历史记录功能。
+基于 FastAPI + Gradio 的求职辅助应用，提供手机号登录、简历诊断、模拟面试和历史记录功能。
 
 ## 当前进度
+
+- 9/29–30 部署与最终交付的复现入口见 [部署说明](部署说明.md)、[HTTP 接口](docs/api.md)、[回滚与演示步骤](docs/release_runbook.md)。验收证据与可选部署状态见 [工程验收记录](docs/engineering_acceptance.md)。
 
 - 9 月 25–28 日工程化任务的本轮实现与验收见 [工程验收记录](docs/engineering_acceptance.md)：Redis AOF 重启、文件下载归属校验、24 小时导出清理、异常日志正文保护及故障恢复已补齐。新增 [文件存储说明](docs/storage.md)、[稳定性与重试边界](docs/stability.md)，并提供完整浏览器验收脚本。
 - 9 月 24 日工程化首日已验收：232 项测试全部通过（含 Redis 与 Chromium PDF 集成），Ruff、依赖声明与锁文件检查通过；完整旧库迁移、历史复合索引和 WAL 备份恢复已验证。日常库的 5 用户、17 份简历、10 轮面试也完成独立恢复核对。详见 [当日记录](今日开发计划-2026-09-24.md)、[数据模型与备份恢复](docs/data_model.md) 和 [工程验收及后续待办](docs/engineering_acceptance.md)。
@@ -18,11 +20,11 @@
 
 ## 环境准备
 
-项目要求 Python 3.11。使用现有虚拟环境时：
+项目验收运行时为 Python 3.11，推荐使用 uv 0.12.2 按锁文件安装全部依赖及项目包。从项目根目录执行：
 
 ```powershell
+uv sync --locked --python 3.11 --cache-dir .uv-cache
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
 ```
 
 首次配置环境变量：
@@ -31,7 +33,7 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-`.env` 包含本地密钥，不会被 Git 提交。
+仅在 `.env` 尚不存在时复制示例，再填写模型密钥。`.env` 不会被 Git 提交。备选 pip 安装必须额外执行 `python -m pip install -e .` 安装本项目；仅安装 `requirements.txt` 不包含项目包，而且未锁定全部传递依赖，不能视为已验收的锁定环境。
 
 M1 已加入版本化简历诊断策略，但默认保持原有单分数流程。开发或测试环境可显式启用六维诊断：
 
@@ -229,6 +231,18 @@ Redis 集成测试需要 `redis-server` 在 PATH 中，运行时使用独立端�
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.check_browser_flow
 .\.venv\Scripts\python.exe -m scripts.check_browser_flow --live --output tmp/browser-live-2026-09-28
+```
+
+9/29–30 的一体化部署验收会复制源代码（不复制 `.env` 或日常数据）、创建全新虚拟环境、按缓存中的锁文件安装、两次初始化真实题库、检查 HTTP、运行全部测试，再完成真实浏览器演示和四类存储回滚。它需要 uv、redis-server、项目内 Chromium、已配置的两项 API Key；会产生实际模型调用。输出目录必须尚不存在：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_clean_deployment --live --output tmp/clean-release-new
+```
+
+先运行正常的 `uv sync --locked --cache-dir .uv-cache` 下载依赖；验收脚本的安装步骤使用 `--offline` 检查锁定依赖可以重新安装。若缓存不全，先联网补齐，不复用已有虚拟环境冒充干净安装。无需外部模型的回滚演练：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_browser_flow --rollback --output tmp/rollback-fixed-new
 ```
 
 ## 项目结构
