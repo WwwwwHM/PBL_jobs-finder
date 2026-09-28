@@ -4,6 +4,8 @@
 
 ## 当前进度
 
+- 9 月 25–28 日工程化任务的本轮实现与验收见 [工程验收记录](docs/engineering_acceptance.md)：Redis AOF 重启、文件下载归属校验、24 小时导出清理、异常日志正文保护及故障恢复已补齐。新增 [文件存储说明](docs/storage.md)、[稳定性与重试边界](docs/stability.md)，并提供完整浏览器验收脚本。
+- 9 月 24 日工程化首日已验收：232 项测试全部通过（含 Redis 与 Chromium PDF 集成），Ruff、依赖声明与锁文件检查通过；完整旧库迁移、历史复合索引和 WAL 备份恢复已验证。日常库的 5 用户、17 份简历、10 轮面试也完成独立恢复核对。详见 [当日记录](今日开发计划-2026-09-24.md)、[数据模型与备份恢复](docs/data_model.md) 和 [工程验收及后续待办](docs/engineering_acceptance.md)。
 - Gradio 登录页和三个业务 Tab 已完成。
 - 后端工程结构、环境配置和 SQLite 数据层已完成。
 - 验证码、Token 鉴权、LocalStorage 登录态恢复和退出清理已接入。
@@ -151,6 +153,8 @@ python frontend.py
 
 默认访问地址为 `http://127.0.0.1:7860`。
 
+此入口现在启动单 worker 的 FastAPI + Gradio，提供 `/health/live`、`/health/ready` 和鉴权下载。需要跨重启保留登录态和每日配额时，在 `.env` 设置 `STATE_BACKEND=redis` 并配置带持久化的 Redis。默认 memory 模式仍会在重启后丢失高频状态。PDF 下载必须保持登录，有效期 24 小时；历史文本不随导出到期删除。
+
 候选版本启动前可执行统一部署预检。`--release` 会额外要求两项 API Key、
 42 条已初始化面试题、Playwright Chromium 和可正常构建的 Gradio 页面：
 
@@ -163,7 +167,7 @@ python scripts/check_deployment.py --release
 
 应用启动后会同时向控制台和 `data/logs/app.log` 输出日志。日志按天轮转，
 默认保留最近 14 份；页面中的系统类错误会显示一个错误编号，可直接在日志中
-搜索该编号以查看完整异常链。日志会自动遮盖手机号、邮箱、Token、密码和 API Key，
+搜索该编号以查看异常类型链和堆栈位置；不记录第三方异常文本、模型正文或 SQL 参数。日志会自动遮盖手机号、邮箱、Token、密码和 API Key，
 业务代码也只记录输入长度、记录 ID 等诊断元数据，不记录简历正文。
 
 可以在 `.env` 中调整日志配置：
@@ -183,9 +187,30 @@ Windows 上若 `app.log` 被其他进程占用，日志会继续追加到当前�
 
 ## 运行测试
 
+工程化基线的静态与依赖检查：
+
+```powershell
+ruff check .
+.\.venv\Scripts\python.exe scripts\check_dependencies.py
+uv lock --check --offline --cache-dir .uv-cache
+uv pip check --python .venv/Scripts/python.exe --cache-dir .uv-cache
+```
+
+Ruff 和 uv 是开发检查工具；9/24 验证版本分别为 0.12.0 和 0.12.2。直接依赖检查脚本核对 `pyproject.toml`、`requirements.txt`、`uv.lock` 与当前解释器安装版本，运行时应使用项目虚拟环境。
+
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+默认跳过两项 Chromium PDF 集成测试；已安装项目内 Chromium 时可完整运行：
+
+```powershell
+$env:RUN_PLAYWRIGHT_PDF_TESTS = '1'
+$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\.playwright-browsers"
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Redis 集成测试需要 `redis-server` 在 PATH 中，运行时使用独立端口和临时目录；缺少该程序时会跳过对应集成测试。备份、恢复和旧库验证命令见 [数据模型](docs/data_model.md)。
 
 配置真实 API Key 并初始化题库后，可重复执行性能门禁。默认测量 5 次简历诊断和 10 次完整面试首轮，任一次超过 30 秒或 15 秒时返回非零退出码；输出只包含耗时和汇总，不打印简历或模型内容：
 
@@ -197,6 +222,13 @@ python -m unittest discover -s tests -v
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_acceptance_demo.py --confirm-live-services
+```
+
+完整浏览器验收使用隔离 Redis、SQLite、Chroma 和真实 Chromium。默认固定模型数据；`--live` 使用当前 API 配置调用真实服务，只提交合成资料。报告和截图写入已忽略的 `tmp/`：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_browser_flow
+.\.venv\Scripts\python.exe -m scripts.check_browser_flow --live --output tmp/browser-live-2026-09-28
 ```
 
 ## 项目结构

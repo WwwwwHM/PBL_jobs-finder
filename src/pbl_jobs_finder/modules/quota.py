@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -10,8 +11,14 @@ from threading import RLock
 from zoneinfo import ZoneInfo
 
 from pbl_jobs_finder.config.settings import get_settings
-from pbl_jobs_finder.exceptions import AuthenticationError, QuotaExceededError
+from pbl_jobs_finder.exceptions import (
+    AuthenticationError,
+    QuotaExceededError,
+    StateStoreError,
+)
 from pbl_jobs_finder.modules.auth import verify_token
+from pbl_jobs_finder.modules.redis_state import RedisState, configured_redis_state
+from pbl_jobs_finder.utils.logging import report_exception
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +46,12 @@ class QuotaService:
         timezone_name: str = "Asia/Hong_Kong",
         token_verifier: Callable[[str], dict[str, str] | None] = verify_token,
         clock: Callable[[], datetime] | None = None,
+        state: RedisState | None = None,
     ) -> None:
         if daily_limit <= 0:
             raise ValueError("daily_limit must be greater than zero")
         self.limit = daily_limit
+        self.state = state
         self.timezone = ZoneInfo(timezone_name)
         self._verify_token = token_verifier
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -51,6 +60,9 @@ class QuotaService:
 
     def status(self, token: str) -> QuotaStatus:
         phone = self._phone(token)
+        if self.state is not None:
+            day = self._day()
+            return QuotaStatus(self.limit, self.state.quota_used(phone, day.isoformat()), day)
         with self._lock:
             day = self._day()
             return QuotaStatus(self.limit, self._used(phone, day), day)
@@ -60,6 +72,19 @@ class QuotaService:
         """Yield the verified phone; roll back if the operation raises."""
 
         phone = self._phone(token)
+        if self.state is not None:
+            day = self._day().isoformat()
+            if not self.state.reserve_quota(phone, day, self.limit):
+                raise QuotaExceededError("今日免费次数已用完，请明日再试")
+            try:
+                yield phone
+            except BaseException:
+                try:
+                    self.state.refund_quota(phone, day)
+                except StateStoreError as exc:
+                    report_exception(logging.getLogger(__name__), "quota.refund", exc)
+                raise
+            return
         with self._lock:
             day = self._day()
             used = self._used(phone, day)
@@ -98,5 +123,6 @@ class QuotaService:
 
 _settings = get_settings()
 quota_service = QuotaService(
-    daily_limit=_settings.daily_quota, timezone_name=_settings.timezone
+    daily_limit=_settings.daily_quota, timezone_name=_settings.timezone,
+    state=configured_redis_state(),
 )

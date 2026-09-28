@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from typing import Protocol
+
+import httpx
 
 from pbl_jobs_finder.config import get_settings
 from pbl_jobs_finder.exceptions import LLMConfigurationError, LLMServiceError
@@ -27,6 +30,8 @@ class ZhipuChatClient:
     ) -> None:
         if max_tokens <= 0:
             raise ValueError("max_tokens must be greater than zero")
+        if timeout_seconds <= 0 or not 0 <= max_retries <= 5:
+            raise ValueError("Invalid timeout or retry count")
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
@@ -37,21 +42,34 @@ class ZhipuChatClient:
         try:
             from zhipuai import ZhipuAI
 
-            client = ZhipuAI(
+            with ZhipuAI(
                 api_key=self.api_key,
                 timeout=self.timeout_seconds,
-                max_retries=self.max_retries,
-            )
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=self.max_tokens,
-                timeout=self.timeout_seconds,
-            )
+                max_retries=0,
+            ) as client:
+                for attempt in range(self.max_retries + 1):
+                    try:
+                        response = client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                            temperature=0.2,
+                            max_tokens=self.max_tokens,
+                            timeout=self.timeout_seconds,
+                        )
+                        break
+                    except Exception as exc:
+                        status = getattr(exc, "status_code", None)
+                        transient = (
+                            isinstance(exc, (httpx.TimeoutException, httpx.NetworkError))
+                            or type(exc).__name__ == "APITimeoutError"
+                            or status in {408, 429, 500, 502, 503, 504}
+                        )
+                        if not transient or attempt == self.max_retries:
+                            raise
+                        time.sleep(0.25 * 2**attempt)
             content = response.choices[0].message.content
         except Exception as exc:
             error_name = type(exc).__name__

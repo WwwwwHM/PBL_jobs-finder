@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from urllib.parse import quote
 
 import gradio as gr
 
@@ -61,11 +63,17 @@ READ_TOKEN_JS = f"""() => {{
     try {{ return localStorage.getItem('{STORAGE_KEY}') || ''; }}
     catch {{ return ''; }}
 }}"""
-WRITE_TOKEN_JS = f"""(token) => {{
+WRITE_TOKEN_JS = f"""async (token) => {{
     try {{
         if (token) localStorage.setItem('{STORAGE_KEY}', token);
         else localStorage.removeItem('{STORAGE_KEY}');
     }} catch {{ /* Session-only login when storage is unavailable. */ }}
+    try {{
+        await fetch('/api/session', {{
+            method: token ? 'POST' : 'DELETE',
+            headers: token ? {{Authorization: 'Bearer ' + token}} : {{}}
+        }});
+    }} catch {{ /* Downloads remain denied until session synchronization succeeds. */ }}
     return token;
 }}"""
 resume_service = ResumeDiagnosisService()
@@ -439,7 +447,7 @@ def generate_resume_callback(
     return (
         gr.update(visible=False),
         "",
-        gr.update(value=str(outcome.pdf_path), visible=True),
+        gr.update(value=f'<a href="/api/downloads/{quote(outcome.pdf_path.name)}" download>下载 PDF 简历</a>', visible=True),
         f"{template_label} PDF 简历已生成，可直接下载。",
         document_to_markdown(outcome.document),
         enabled,
@@ -1028,6 +1036,7 @@ def build_app() -> gr.Blocks:
     """
 
     with gr.Blocks(
+        delete_cache=(3600, 86400),
         title="AI 求职助手",
         theme=gr.themes.Soft(primary_hue="indigo", neutral_hue="slate"),
         css=css,
@@ -1130,8 +1139,8 @@ def build_app() -> gr.Blocks:
                             generate_resume_button = gr.Button(
                                 "生成新版 PDF 简历", variant="primary"
                             )
-                            download_resume_button = gr.DownloadButton(
-                                "下载 PDF 简历",
+                            download_resume_button = gr.HTML(
+                                "",
                                 visible=False,
                             )
                         with gr.Column(
@@ -1140,23 +1149,25 @@ def build_app() -> gr.Blocks:
                         ) as supplement_panel, gr.Column(
                             elem_classes="supplement-modal"
                         ):
-                                gr.Markdown("### 补充履历")
+                                gr.Markdown("### 补充简历内容")
                                 gr.Markdown(
-                                    "补充原简历未写明的项目、职责、成果或证书。只填写真实信息。",
+                                    "可补充项目、职责、成果、技能或证书；完整项目请写明名称、角色、时间、技术栈和项目要点。只填写真实信息。",
                                     elem_classes="section-intro",
                                 )
                                 supplemental_experience = gr.Textbox(
-                                    label="补充信息（可选）",
+                                    label="补充内容（项目/经历/技能/证书，可选）",
                                     placeholder=(
-                                        "例如：2025 年负责订单系统缓存改造；个人承担方案设计和上线，"
-                                        "接口平均响应时间从 320ms 降至 180ms。"
+                                        "项目示例：AI 求职助手\n"
+                                        "项目角色：独立开发｜项目时间：2026.08-2026.09\n"
+                                        "技术栈：Python、GLM、ChromaDB\n"
+                                        "项目要点：基于 RAG 构建题库并实现多轮模拟面试。"
                                     ),
                                     lines=7,
                                     max_lines=14,
                                     max_length=6000,
                                 )
                                 resume_photo = gr.File(
-                                    label="简历照片（可选，JPEG/PNG/WebP，最大 5MB）",
+                                    label="替换简历照片（可选，JPEG/PNG/WebP，最大 5MB）",
                                     file_types=[".jpg", ".jpeg", ".png", ".webp"],
                                     type="filepath",
                                 )
@@ -1589,7 +1600,11 @@ def build_app() -> gr.Blocks:
 
 if __name__ == "__main__":
     try:
-        build_app().launch()
+        import uvicorn
+
+        uvicorn.run("pbl_jobs_finder.server:create_app", factory=True,
+                    host=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"),
+                    port=int(os.getenv("GRADIO_SERVER_PORT", "7860")), workers=1)
     except Exception as exc:
         report_exception(logger, "frontend.launch", exc)
         raise

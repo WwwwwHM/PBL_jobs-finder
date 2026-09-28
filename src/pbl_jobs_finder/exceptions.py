@@ -46,6 +46,13 @@ class PBLJobsFinderError(Exception):
         return f"{type(self).__name__}({fields})"
 
 
+class StateStoreError(PBLJobsFinderError, RuntimeError):
+    """Shared authentication or quota storage is unavailable."""
+
+    code = "11003"
+    description = "登录与配额服务暂时不可用，请稍后重试"
+
+
 class AuthenticationError(PBLJobsFinderError, ValueError):
     """The supplied token does not identify an active user."""
 

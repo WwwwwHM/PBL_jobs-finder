@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.env.*
+data
+output
+tmp
+.uv-cache
+.playwright-browsers
+__pycache__
+**/__pycache__
+*.mp4
+job-search-cases

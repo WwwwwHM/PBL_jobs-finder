@@ -1,10 +1,4 @@
-"""In-memory verification-code and token authentication for the MVP.
-
-The MVP deliberately keeps short-lived authentication state in memory.  This
-is sufficient for the single-process Gradio deployment described in the
-project plan; Redis can replace the two dictionaries when multiple workers
-are introduced.
-"""
+"""Verification codes and opaque tokens with optional shared Redis state."""
 
 from __future__ import annotations
 
@@ -19,6 +13,7 @@ from threading import RLock
 from pbl_jobs_finder.messages import Message, MessageResult
 from pbl_jobs_finder.models.database import Database, database
 from pbl_jobs_finder.models.repositories import get_or_create_user, get_user
+from pbl_jobs_finder.modules.redis_state import RedisState, configured_redis_state
 
 PHONE_PATTERN = re.compile(r"^1\d{10}$")
 CODE_PATTERN = re.compile(r"^\d{6}$")
@@ -50,8 +45,10 @@ class AuthService:
         database_instance: Database | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
+        state: RedisState | None = None,
     ) -> None:
         self.database = database_instance or database
+        self.state = state
         self._clock = clock or (lambda: datetime.now(UTC))
         self._verification_codes: dict[str, _VerificationEntry] = {}
         self._tokens: dict[str, _TokenEntry] = {}
@@ -67,6 +64,11 @@ class AuthService:
 
         now = self._now()
         code = f"{secrets.randbelow(1_000_000):06d}"
+        if self.state is not None:
+            if not self.state.send_code(phone, code):
+                return Message.failure("验证码发送过于频繁，请 60 秒后重试")
+            print(f"[AUTH] verification code for {phone}: {code}")
+            return Message.success("验证码已发送，请查收")
         with self._lock:
             self._verification_codes[phone] = _VerificationEntry(
                 code=code,
@@ -85,6 +87,18 @@ class AuthService:
             return Message.failure("登录失败：请输入有效的 11 位手机号")
         if not CODE_PATTERN.fullmatch(code):
             return Message.failure("登录失败：请输入 6 位数字验证码")
+
+        if self.state is not None:
+            result = self.state.consume_code(phone, code)
+            if result == 0:
+                return Message.failure("登录失败：验证码已过期或不存在")
+            if result == -1:
+                return Message.failure("登录失败：验证码错误")
+            self.database.initialize()
+            with self.database.session() as session:
+                get_or_create_user(session, phone)
+            token = self.state.issue_token(phone, secrets.token_urlsafe(32))
+            return Message.success("登录成功", data=token)
 
         now = self._now()
         with self._lock:
@@ -117,6 +131,17 @@ class AuthService:
         token = (token or "").strip()
         if not token:
             return None
+        if self.state is not None:
+            phone = self.state.token_phone(token)
+            if phone is None:
+                return None
+            self.database.initialize()
+            with self.database.session() as session:
+                user = get_user(session, phone)
+                if user is None:
+                    self.state.revoke_token(token)
+                    return None
+                return {"phone": user.phone, "nickname": user.nickname}
         now = self._now()
         with self._lock:
             entry = self._tokens.get(token)
@@ -137,6 +162,8 @@ class AuthService:
     def revoke_token(self, token: str) -> bool:
         """Invalidate a token and return whether it was active."""
 
+        if self.state is not None:
+            return self.state.revoke_token((token or "").strip())
         with self._lock:
             return self._revoke_token_locked((token or "").strip())
 
@@ -177,7 +204,7 @@ def _normalize_phone(phone: str | None) -> str:
     return (phone or "").strip()
 
 
-_default_auth_service = AuthService()
+_default_auth_service = AuthService(state=configured_redis_state())
 
 
 def send_verification_code(phone: str) -> MessageResult[None]:

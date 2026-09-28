@@ -1,0 +1,38 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      APP_ENV: deployment
+      DATA_DIR: /app/data
+      DATABASE_URL: sqlite:////app/data/job_assistant.db
+      UPLOADS_DIR: /app/data/uploads
+      EXPORTS_DIR: /app/data/exports
+      CHROMA_DIR: /app/data/chroma_db
+      LOG_DIR: /app/data/logs
+      STATE_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      PLAYWRIGHT_BROWSERS_PATH: /opt/playwright
+    ports:
+      - "127.0.0.1:7860:7860"
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+volumes:
+  app-data:
+  redis-data:

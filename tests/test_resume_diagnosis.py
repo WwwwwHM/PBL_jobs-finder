@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from docx import Document
+from PIL import Image
 from PyPDF2 import PdfWriter
 
 from pbl_jobs_finder.models.database import Database
@@ -38,7 +39,11 @@ from pbl_jobs_finder.modules.resume_parser import (
     ResumeParseError,
     parse_resume_pdf,
 )
-from pbl_jobs_finder.modules.resume_pdf import ResumePDFError, document_to_markdown
+from pbl_jobs_finder.modules.resume_pdf import (
+    ResumePDFError,
+    document_to_markdown,
+    prepare_photo_data_uri,
+)
 from pbl_jobs_finder.utils.llm_client import LLMServiceError, ZhipuChatClient
 
 
@@ -52,6 +57,20 @@ class FakeChatClient:
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         return self.response
+
+
+class SequencedChatClient(FakeChatClient):
+    def __init__(self, *responses: str) -> None:
+        super().__init__(responses[0])
+        self.responses = list(responses)
+        self.calls = 0
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        response = self.responses[min(self.calls, len(self.responses) - 1)]
+        self.calls += 1
+        return response
 
 
 class RaisingChatClient:
@@ -186,7 +205,119 @@ def _fake_pdf_renderer(_: str, destination: Path) -> None:
     destination.write_bytes(b"%PDF-1.4\n%%EOF")
 
 
+_BLOATED_SKILLS = ["Java", "Spring Boot", "MyBatis", "MySQL", "Linux", "模式识别", "数字信号处理", "自动控制原理", "数据结构", "算法设计与分析", "工程问题建模", "软件开发", "VibeCoding", "RabbitMQ", "Redis", "Redisson", "Guava", "ShardingSphere", "MyBatis Plus", "MyBatisX", "Hutool", "Jsoup", "Lombok", "Logback", "Caffeine", "CET-6", "Spring Session", "CompletableFuture", "TensorFlow", "PyTorch"]
+_CORE_SKILLS = ["Java", "Spring Boot", "MyBatis", "MySQL", "Redis", "RabbitMQ", "Linux"]
+
+
 class ResumeDiagnosisTests(unittest.TestCase):
+    def test_bloated_skills_are_corrected_before_generation_returns(self) -> None:
+        invalid = json.loads(_resume_document_response())
+        invalid["skills"] = _BLOATED_SKILLS
+        client = SequencedChatClient(
+            json.dumps(invalid), json.dumps({"selected_ids": [0, 1, 2, 3, 11, 10, 4]})
+        )
+
+        document = generate_resume_with_supplement(
+            "候选人技能：" + "、".join(_BLOATED_SKILLS),
+            "# 候选人\n\n## 专业技能\n" + "、".join(_BLOATED_SKILLS),
+            "", "Java 后端开发工程师", client=client,
+        )
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(document.skills, _CORE_SKILLS)
+        self.assertIn("Redis", document.skills)
+        self.assertIn("CET-6", document.certificates)
+        self.assertEqual(document.experience[0].highlights, invalid["experience"][0]["highlights"])
+        self.assertIn("candidates", client.user_prompt)
+
+    def test_repeated_bloated_response_falls_back_without_losing_resume(self) -> None:
+        response = json.loads(_resume_document_response())
+        response["skills"] = _BLOATED_SKILLS
+        client = SequencedChatClient(json.dumps(response))
+        document = generate_resume_with_supplement(
+            "候选人技能：" + "、".join(_BLOATED_SKILLS),
+            "# 候选人\n\n## 专业技能\n" + "、".join(_BLOATED_SKILLS),
+            "", "Java 后端开发工程师", client=client,
+        )
+        self.assertEqual(document.skills, ["Java"])
+        self.assertEqual(document.certificates, ["CET-6"])
+        self.assertEqual(document.experience[0].highlights, response["experience"][0]["highlights"])
+        self.assertEqual(client.calls, 2)
+
+    def test_generation_removes_auxiliary_tags_and_moves_language_certificate(self) -> None:
+        response = json.loads(_resume_document_response())
+        response["skills"] = ["Java", "MySQL", "Hutool", "Logback", "CET-6", "VibeCoding"]
+        client = SequencedChatClient(json.dumps(response))
+        document = generate_resume_with_supplement(
+            "候选人使用 Java 和 MySQL 开发服务，并持有 CET-6 证书。",
+            "# 候选人\n\n## 专业技能\nJava、MySQL、Hutool、Logback、CET-6、VibeCoding",
+            "", "Java 后端工程师", client=client,
+        )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(document.skills, ["Java", "MySQL"])
+        self.assertEqual(document.certificates, ["CET-6"])
+        self.assertEqual(document.experience[0].highlights, response["experience"][0]["highlights"])
+
+    def test_markdown_diagnosis_corrects_skills_without_losing_other_sections(self) -> None:
+        invalid = json.loads(_model_response())
+        suffix = "\n\n## 项目经历\n- 使用 Redis 和 RabbitMQ 开发订单服务。"
+        invalid["optimized_text"] = "# 候选人\n\n## 专业技能\n" + "、".join(_BLOATED_SKILLS) + suffix
+        client = SequencedChatClient(
+            json.dumps(invalid), json.dumps({"selected_ids": [0, 1, 2, 3, 11, 10, 4]})
+        )
+        result = diagnose_resume(
+            "候选人技能：" + "、".join(_BLOATED_SKILLS), "Java 后端开发工程师", client=client
+        )
+        self.assertEqual(client.calls, 2)
+        self.assertIn("、".join(_CORE_SKILLS), result.optimized_text)
+        self.assertIn(suffix, result.optimized_text)
+        self.assertIn("## 语言能力\nCET-6", result.optimized_text)
+
+    def test_diagnosis_preserves_first_result_when_skill_selection_is_still_bloated(self) -> None:
+        original = json.loads(_model_response())
+        original["optimized_text"] += "\n\n## 专业技能\n" + "、".join(_BLOATED_SKILLS)
+        retry = {**original, "score": 1}
+        retry["optimized_text"] = "# 错误重写\n\n## 专业技能\n" + "、".join(_BLOATED_SKILLS[:24])
+        client = SequencedChatClient(json.dumps(original), json.dumps(retry))
+        result = diagnose_resume(
+            "候选人技能：" + "、".join(_BLOATED_SKILLS), "Java 后端开发工程师", client=client
+        )
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(result.score, 82)
+        self.assertIn(json.loads(_model_response())["optimized_text"], result.optimized_text)
+        self.assertIn("## 专业技能\n\nJava\n", result.optimized_text)
+        self.assertNotIn("错误重写", result.optimized_text)
+
+    def test_joined_contacts_are_repaired_before_and_after_diagnosis(self) -> None:
+        response = json.loads(_model_response())
+        response["optimized_text"] = "# 伍海鸣\n\n19883177095617213477\\@qq.com | 杭州"
+        client = FakeChatClient(json.dumps(response))
+        result = diagnose_resume(
+            "伍海鸣\n19883177095617213477@qq.com | 杭州\nPython 开发工程师",
+            "Python 后端工程师",
+            client=client,
+        )
+        self.assertIn("电话：19883177095 | 邮箱：617213477@qq.com", client.user_prompt)
+        self.assertEqual(
+            result.optimized_text,
+            "# 伍海鸣\n\n电话：19883177095 | 邮箱：617213477@qq.com | 杭州",
+        )
+
+    def test_generation_repairs_old_draft_and_model_contact_fields(self) -> None:
+        response = json.loads(_resume_document_response())
+        response["basics"].update(phone="", email="19883177095617213477@qq.com")
+        client = FakeChatClient(json.dumps(response))
+        document = generate_resume_with_supplement(
+            "伍海鸣\n19883177095617213477@qq.com | 杭州\nPython 开发工程师",
+            "# 伍海鸣\n19883177095617213477\\@qq.com | 杭州",
+            "",
+            "Python 后端工程师",
+            client=client,
+        )
+        self.assertNotIn("19883177095617213477", client.user_prompt)
+        self.assertEqual(document.basics.phone, "19883177095")
+        self.assertEqual(document.basics.email, "617213477@qq.com")
+
     def test_diagnosis_uses_the_bounded_release_output_budget(self) -> None:
         client = FakeChatClient(_model_response())
         with patch(
@@ -296,6 +427,67 @@ class ResumeDiagnosisTests(unittest.TestCase):
                 client=FakeChatClient(json.dumps(response, ensure_ascii=False)),
             )
 
+    def test_catch_all_supplement_section_gets_one_correction_retry(self) -> None:
+        invalid = json.loads(_resume_document_response())
+        invalid["additional_sections"] = [
+            {"title": "补充履历", "highlights": ["独立开发 AI 求职助手"]}
+        ]
+        client = SequencedChatClient(
+            json.dumps(invalid, ensure_ascii=False),
+            _resume_document_response(),
+        )
+
+        document = generate_resume_with_supplement(
+            "张三，五年 Python 后端经验，负责订单服务开发和维护。",
+            "# 张三\n\n## 项目经历\n- 负责订单服务开发",
+            "独立开发 AI 求职助手。",
+            "AI 应用开发工程师",
+            client=client,
+        )
+
+        self.assertEqual(client.calls, 2)
+        self.assertFalse(document.additional_sections)
+        self.assertIn("补充信息类兜底栏目", client.user_prompt)
+
+    def test_structured_project_supplement_is_written_to_projects(self) -> None:
+        invalid = json.loads(_resume_document_response())
+        valid = json.loads(_resume_document_response())
+        valid["projects"] = [
+            {
+                "name": "AI 求职助手：基于 RAG 的简历诊断与多轮模拟面试系统",
+                "role": "独立开发",
+                "start_date": "2026.08",
+                "end_date": "2026.09",
+                "highlights": [
+                    "基于 Embedding 与 ChromaDB 构建面试题库，支持岗位过滤与语义召回。",
+                    "设计服务端驱动的多轮面试状态管理，支持动态追问与结构化报告。",
+                ],
+            }
+        ]
+        supplement = (
+            "AI 求职助手：基于 RAG 的简历诊断与多轮模拟面试系统\n"
+            "项目角色：独立开发 ｜ 项目时间：2026.08-2026.09\n"
+            "技术栈：Python、GLM、ChromaDB、Gradio、Pydantic\n"
+            "项目简介：面向求职者实现简历诊断、模拟面试和历史复盘。\n"
+            "- 基于 RAG 构建面试题库并支持语义检索。"
+        )
+        client = SequencedChatClient(
+            json.dumps(invalid, ensure_ascii=False),
+            json.dumps(valid, ensure_ascii=False),
+        )
+
+        document = generate_resume_with_supplement(
+            "张三，五年 Python 后端经验，负责订单服务开发和维护。",
+            "# 张三\n\n## 项目经历\n- 负责订单服务开发",
+            supplement,
+            "AI 应用开发工程师",
+            client=client,
+        )
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(document.projects[0].name, "AI 求职助手：基于 RAG 的简历诊断与多轮模拟面试系统")
+        self.assertIn("完整项目经历卡片", client.user_prompt)
+
     def test_ai_supplement_is_polished_into_matching_resume_sections(self) -> None:
         response = json.loads(_resume_document_response())
         response["skills"].extend(
@@ -384,6 +576,13 @@ class ResumeDiagnosisTests(unittest.TestCase):
             result = parse_resume_pdf(path)
         self.assertIn("Python backend engineer", result)
 
+    def test_pdf_extraction_restores_joined_contact_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "resume.pdf"
+            _write_text_pdf(path, "19883177095617213477@qq.com")
+            result = parse_resume_pdf(path)
+        self.assertEqual(result, "电话：19883177095 | 邮箱：617213477@qq.com")
+
     def test_corrupt_pdf_prompts_for_pasted_text(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "corrupt.pdf"
@@ -394,7 +593,7 @@ class ResumeDiagnosisTests(unittest.TestCase):
     def test_pdf_falls_back_to_pdfplumber_and_normalizes_text(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "resume.pdf"
-            path.write_bytes(b"%PDF placeholder")
+            path.write_bytes(b"%PDF-1.4 placeholder")
             with (
                 patch(
                     "pbl_jobs_finder.modules.resume_parser._extract_with_pypdf",
@@ -412,7 +611,7 @@ class ResumeDiagnosisTests(unittest.TestCase):
     def test_image_pdf_falls_back_to_local_ocr(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "image-resume.pdf"
-            path.write_bytes(b"%PDF placeholder")
+            path.write_bytes(b"%PDF-1.4 placeholder")
             with (
                 patch(
                     "pbl_jobs_finder.modules.resume_parser._extract_with_pypdf",
@@ -471,11 +670,13 @@ class ZhipuChatClientTests(unittest.TestCase):
         completion = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=" result "))]
         )
-        sdk_client = SimpleNamespace(
+        sdk_client = Mock(
             chat=SimpleNamespace(
                 completions=SimpleNamespace(create=Mock(return_value=completion))
             )
         )
+        sdk_client.__enter__ = Mock(return_value=sdk_client)
+        sdk_client.__exit__ = Mock(return_value=False)
         with patch("zhipuai.ZhipuAI", return_value=sdk_client) as factory:
             result = ZhipuChatClient(
                 api_key="secret",
@@ -486,7 +687,7 @@ class ZhipuChatClientTests(unittest.TestCase):
             ).complete("system", "user")
 
         self.assertEqual(result, "result")
-        factory.assert_called_once_with(api_key="secret", timeout=12.5, max_retries=1)
+        factory.assert_called_once_with(api_key="secret", timeout=12.5, max_retries=0)
         sdk_client.chat.completions.create.assert_called_once_with(
             model="glm-test",
             messages=[
@@ -499,13 +700,16 @@ class ZhipuChatClientTests(unittest.TestCase):
         )
 
     def test_timeout_is_translated_to_actionable_error(self) -> None:
-        sdk_client = SimpleNamespace(
+        sdk_client = Mock(
             chat=SimpleNamespace(
                 completions=SimpleNamespace(create=Mock(side_effect=APITimeoutError()))
             )
         )
+        sdk_client.__enter__ = Mock(return_value=sdk_client)
+        sdk_client.__exit__ = Mock(return_value=False)
         with (
             patch("zhipuai.ZhipuAI", return_value=sdk_client),
+            patch("time.sleep"),
             self.assertRaisesRegex(LLMServiceError, "响应超时"),
         ):
             ZhipuChatClient(api_key="secret", model="glm-test").complete(
@@ -563,6 +767,23 @@ class ResumeOCRTests(unittest.TestCase):
 
 
 class ResumeDiagnosisServiceTests(unittest.TestCase):
+    def test_skill_editing_timeout_still_persists_diagnosis_and_charges_once(self) -> None:
+        payload = json.loads(_model_response())
+        payload["optimized_text"] += "\n\n## 专业技能\n" + "、".join(_BLOATED_SKILLS)
+        client = Mock()
+        client.complete.side_effect = [json.dumps(payload), LLMServiceError("timeout")]
+        self.service.chat_client = client
+        outcome = self.service.diagnose(
+            token="token-a", position="Java 后端开发工程师",
+            pasted_text="候选人技能：" + "、".join(_BLOATED_SKILLS),
+        )
+        self.assertEqual(outcome.diagnosis.score, 82)
+        self.assertEqual(self.quota.status("token-a").used, 1)
+        with self.database.session() as session:
+            stored = get_resume_record(session, outcome.record_id)
+            self.assertEqual(stored.optimized_text, outcome.diagnosis.optimized_text)
+        self.assertEqual(client.complete.call_count, 2)
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         root = Path(self.temp_dir.name)
@@ -655,6 +876,92 @@ class ResumeDiagnosisServiceTests(unittest.TestCase):
             payload = json.loads(stored.optimized_text)
             self.assertEqual(payload["basics"]["name"], "张三")
             self.assertIn("320ms", payload["experience"][0]["highlights"][0])
+
+    def test_original_photo_survives_upload_removal_and_service_restart(self) -> None:
+        original_pdf = self.root / "original.pdf"
+        _write_text_pdf(original_pdf, "Python backend engineer")
+        photo = self.root / "original.png"
+        Image.new("RGB", (180, 240), "blue").save(photo)
+        uri = prepare_photo_data_uri(photo)
+        with (
+            patch(
+                "pbl_jobs_finder.modules.resume_diagnosis.parse_resume_pdf",
+                return_value="张三，五年 Python 后端经验，负责订单服务的开发、测试与维护。",
+            ),
+            patch(
+                "pbl_jobs_finder.modules.resume_diagnosis.extract_resume_photo_data_uri",
+                return_value=uri,
+            ) as extract,
+        ):
+            outcome = self.service.diagnose(
+                token="token-a",
+                position="Python 后端工程师",
+                uploaded_file=original_pdf,
+            )
+        extract.assert_called_once()
+        self.assertFalse(extract.call_args.args[0].exists())
+        original_pdf.unlink()
+        photo.unlink()
+        with self.database.session() as session:
+            self.assertEqual(
+                get_resume_record(session, outcome.record_id).photo_data_uri, uri
+            )
+        rendered = []
+
+        def capture(html: str, destination: Path) -> None:
+            rendered.append(html)
+            _fake_pdf_renderer(html, destination)
+
+        restarted = ResumeDiagnosisService(
+            database_instance=self.database,
+            token_verifier=self.users.get,
+            chat_client=FakeChatClient(_resume_document_response()),
+            exports_dir=self.root / "exports",
+            pdf_renderer=capture,
+        )
+        for _ in range(2):
+            restarted.generate_pdf_resume(
+                token="token-a",
+                record_id=outcome.record_id,
+                optimized_text=outcome.diagnosis.optimized_text,
+            )
+        self.assertTrue(all(f'src="{uri}"' in html for html in rendered))
+        self.assertNotIn(uri, restarted.chat_client.user_prompt)
+
+    def test_uploaded_replacement_photo_is_retained_for_later_generation(self) -> None:
+        outcome = self.service.diagnose(
+            token="token-a",
+            position="Python 后端工程师",
+            pasted_text="张三，五年 Python 后端经验，负责订单服务的开发、测试与维护。",
+        )
+        photo = self.root / "replacement.png"
+        Image.new("RGB", (180, 240), "red").save(photo)
+        uri = prepare_photo_data_uri(photo)
+        self.service.chat_client.response = _resume_document_response()
+        rendered = []
+
+        def capture(html: str, destination: Path) -> None:
+            rendered.append(html)
+            _fake_pdf_renderer(html, destination)
+
+        self.service.pdf_renderer = capture
+        self.service.generate_pdf_resume(
+            token="token-a",
+            record_id=outcome.record_id,
+            optimized_text=outcome.diagnosis.optimized_text,
+            photo_file=photo,
+        )
+        photo.unlink()
+        self.service.generate_pdf_resume(
+            token="token-a",
+            record_id=outcome.record_id,
+            optimized_text=outcome.diagnosis.optimized_text,
+        )
+        self.assertTrue(all(f'src="{uri}"' in html for html in rendered))
+        with self.database.session() as session:
+            self.assertEqual(
+                get_resume_record(session, outcome.record_id).photo_data_uri, uri
+            )
 
     def test_template_selection_is_flag_gated_and_persisted_after_render(self) -> None:
         outcome = self.service.diagnose(
@@ -868,7 +1175,7 @@ class ResumeDiagnosisServiceTests(unittest.TestCase):
 
     def test_pdf_parse_or_ocr_failure_refunds_quota(self) -> None:
         path = self.root / "image-resume.pdf"
-        path.write_bytes(b"%PDF placeholder")
+        path.write_bytes(b"%PDF-1.4 placeholder")
         with (
             patch(
                 "pbl_jobs_finder.modules.resume_diagnosis.parse_resume_pdf",

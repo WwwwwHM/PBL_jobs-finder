@@ -9,7 +9,7 @@ from collections.abc import Callable
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -24,10 +24,14 @@ from pydantic import (
 )
 
 from pbl_jobs_finder.exceptions import ResumeDocumentError, ResumePDFError
+from pbl_jobs_finder.modules.resume_contacts import split_joined_qq_contact
 from pbl_jobs_finder.modules.resume_templates import (
     DEFAULT_RESUME_TEMPLATE_ID,
     get_resume_template,
 )
+
+if TYPE_CHECKING:
+    import pypdfium2 as pdfium
 
 ShortText = Annotated[str, Field(max_length=160)]
 LongText = Annotated[str, Field(max_length=1200)]
@@ -54,6 +58,18 @@ class ResumeBasics(_ResumeModel):
     location: ShortText = ""
     website: ShortText = ""
     summary: LongText = ""
+
+    @model_validator(mode="after")
+    def separate_contacts(self) -> ResumeBasics:
+        joined = split_joined_qq_contact(self.email)
+        if joined is not None:
+            phone, email = joined
+            existing_phone = re.sub(r"[\s()+-]", "", self.phone)
+            if existing_phone and existing_phone not in (phone, f"86{phone}"):
+                raise ValueError("joined email conflicts with the supplied phone number")
+            self.phone = self.phone or phone
+            self.email = email
+        return self
 
 
 class ResumeExperience(_ResumeModel):
@@ -277,6 +293,8 @@ def prepare_photo_data_uri(photo_file: str | Path | None) -> str:
 
     path = Path(photo_file)
     try:
+        if path.is_symlink() or not path.is_file():
+            raise ResumePDFError("简历照片无法读取，请重新上传")
         size = path.stat().st_size
     except OSError as exc:
         raise ResumePDFError("简历照片无法读取，请重新上传") from exc
@@ -292,22 +310,187 @@ def prepare_photo_data_uri(photo_file: str | Path | None) -> str:
             width, height = source.size
             if width <= 0 or height <= 0 or width * height > MAX_PHOTO_PIXELS:
                 raise ResumePDFError("简历照片尺寸无效或像素过大")
-            photo = ImageOps.exif_transpose(source)
-            photo.thumbnail(MAX_RENDERED_PHOTO_SIZE, Image.Resampling.LANCZOS)
-            if photo.mode in {"RGBA", "LA"} or "transparency" in photo.info:
-                rgba = photo.convert("RGBA")
-                flattened = Image.new("RGB", rgba.size, "white")
-                flattened.paste(rgba, mask=rgba.getchannel("A"))
-                photo = flattened
-            else:
-                photo = photo.convert("RGB")
-            output = BytesIO()
-            photo.save(output, format="JPEG", quality=90, optimize=True)
+            return _photo_to_data_uri(source)
     except ResumePDFError:
         raise
     except (OSError, UnidentifiedImageError, ValueError):
         raise ResumePDFError("简历照片仅支持 JPEG、PNG 或 WebP 格式")
+
+
+def _photo_to_data_uri(source: Image.Image) -> str:
+    photo = ImageOps.exif_transpose(source)
+    photo.thumbnail(MAX_RENDERED_PHOTO_SIZE, Image.Resampling.LANCZOS)
+    if photo.mode in {"RGBA", "LA"} or "transparency" in photo.info:
+        rgba = photo.convert("RGBA")
+        photo = Image.new("RGB", rgba.size, "white")
+        photo.paste(rgba, mask=rgba.getchannel("A"))
+    else:
+        photo = photo.convert("RGB")
+    output = BytesIO()
+    photo.save(output, format="JPEG", quality=90, optimize=True)
     return _data_uri("image/jpeg", output.getvalue())
+
+
+def extract_resume_photo_data_uri(file_path: str | Path) -> str:
+    """Recover native image pixels and encode a portrait without JPEG loss."""
+
+    import pypdfium2 as pdfium
+
+    try:
+        with pdfium.PdfDocument(str(file_path)) as document:
+            if not len(document):
+                return ""
+            page = document[0]
+            try:
+                width, height = page.get_size()
+                portraits, scans = [], []
+                for image in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]):
+                    pixel_width, pixel_height = image.get_px_size()
+                    if (
+                        min(pixel_width, pixel_height) < 80
+                        or pixel_width * pixel_height > MAX_PHOTO_PIXELS
+                    ):
+                        continue
+                    matrix = _page_image_matrix(image, page)
+                    left, bottom, right, top = matrix.on_rect(0, 0, 1, 1)
+                    image_width, image_height = right - left, top - bottom
+                    if (
+                        -0.01 <= left < right <= width + 0.01
+                        and -0.01 <= height - top < height - bottom <= height * 0.4
+                        and 45 <= image_width <= width * 0.3
+                        and 60 <= image_height <= height * 0.3
+                        and 0.55 <= image_width / image_height <= 0.95
+                    ):
+                        portraits.append((image, matrix))
+                    elif image_width >= width * 0.9 and image_height >= height * 0.9:
+                        scans.append((image, matrix))
+                is_scan = len(portraits) != 1
+                candidates = scans if is_scan else portraits
+                if len(candidates) != 1:
+                    return ""
+                image, matrix = candidates[0]
+                native = _native_pdf_image(image, matrix)
+                if native is None:
+                    return ""
+                try:
+                    if is_scan:
+                        crop = _find_scanned_photo_box(native)
+                        if crop is None:
+                            return ""
+                        with native.crop(crop) as portrait:
+                            return _png_photo_data_uri(portrait)
+                    return _png_photo_data_uri(native)
+                finally:
+                    native.close()
+            finally:
+                page.close()
+    except Exception:  # noqa: BLE001 - optional image recovery must not block diagnosis
+        return ""
+
+
+def _page_image_matrix(
+    image: pdfium.PdfImage, page: pdfium.PdfPage
+) -> pdfium.PdfMatrix:
+    """Include nested forms, crop-box offsets, and the page's display rotation."""
+
+    import pypdfium2 as pdfium
+
+    matrix = image.get_matrix()
+    container = image.container
+    while container is not None:
+        matrix = matrix.multiply(container.get_matrix())
+        container = container.container
+    left, bottom, _, _ = page.get_bbox()
+    matrix = matrix.translate(-left, -bottom)
+    width, height = page.get_size()
+    rotations = {
+        0: pdfium.PdfMatrix(),
+        90: pdfium.PdfMatrix(0, -1, 1, 0, 0, height),
+        180: pdfium.PdfMatrix(-1, 0, 0, -1, width, height),
+        270: pdfium.PdfMatrix(0, 1, -1, 0, width, 0),
+    }
+    return matrix.multiply(rotations[page.get_rotation()])
+
+
+def _native_pdf_image(
+    image: pdfium.PdfImage, matrix: pdfium.PdfMatrix
+) -> Image.Image | None:
+    """Decode at native size, applying masks and only lossless orientation changes."""
+
+    import pypdfium2 as pdfium
+
+    a, b, c, d, _, _ = matrix.get()
+    if abs(b) < 1e-4 and abs(c) < 1e-4:
+        transpose = {
+            (False, False): None,
+            (True, False): Image.Transpose.FLIP_LEFT_RIGHT,
+            (False, True): Image.Transpose.FLIP_TOP_BOTTOM,
+            (True, True): Image.Transpose.ROTATE_180,
+        }[(a < 0, d < 0)]
+    elif abs(a) < 1e-4 and abs(d) < 1e-4:
+        transpose = {
+            (False, True): Image.Transpose.ROTATE_90,
+            (True, False): Image.Transpose.ROTATE_270,
+            (True, True): Image.Transpose.TRANSPOSE,
+            (False, False): Image.Transpose.TRANSVERSE,
+        }[(b < 0, c < 0)]
+    else:
+        return None
+    width, height = image.get_px_size()
+    original_matrix = image.get_matrix()
+    try:
+        # Decode this image alone at 1:1 pixels, including any PDF alpha mask.
+        image.set_matrix(pdfium.PdfMatrix(width, 0, 0, height, 0, 0))
+        bitmap = image.get_bitmap(render=True, scale_to_original=False)
+        try:
+            pixels = bitmap.to_pil()
+            return pixels.copy() if transpose is None else pixels.transpose(transpose)
+        finally:
+            bitmap.close()
+    finally:
+        image.set_matrix(original_matrix)
+
+
+def _png_photo_data_uri(photo: Image.Image) -> str:
+    output = BytesIO()
+    photo.save(output, format="PNG")
+    return _data_uri("image/png", output.getvalue())
+
+
+def _find_scanned_photo_box(image: Image.Image) -> tuple[int, int, int, int] | None:
+    """Locate one face within a bounded portrait region in a scanned header."""
+
+    import cv2
+    import numpy as np
+
+    header = np.asarray(image.convert("RGB"))[: int(image.height * 0.4)]
+    gray = cv2.cvtColor(header, cv2.COLOR_RGB2GRAY)
+    detector = cv2.CascadeClassifier(
+        str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
+    )
+    faces = detector.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=6, minSize=(35, 35)
+    )
+    if len(faces) != 1:
+        return None
+    face_x, face_y, face_width, face_height = faces[0]
+    # A connected nonwhite photo background preserves the full portrait frame,
+    # instead of guessing a crop around the face and including adjacent text.
+    mask = (header.min(axis=2) < 240).astype("uint8")
+    _, _, components, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    candidates = []
+    for x, y, width, height, _ in components[1:]:
+        if (
+            x <= face_x
+            and y <= face_y
+            and x + width >= face_x + face_width
+            and y + height >= face_y + face_height
+            and 0.55 <= width / height <= 0.95
+            and 1.3 * face_width <= width <= image.width * 0.3
+            and 1.6 * face_height <= height <= image.height * 0.3
+        ):
+            candidates.append((int(x), int(y), int(x + width), int(y + height)))
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def document_to_markdown(document: ResumeDocument) -> str:
@@ -372,9 +555,7 @@ def create_resume_pdf(
 
     destination_dir = Path(output_dir)
     destination_dir.mkdir(parents=True, exist_ok=True)
-    stem = _safe_filename(target_position) or "新版简历"
-    suffix = str(record_id) if record_id is not None else uuid4().hex[:8]
-    destination = destination_dir / f"{stem}_新版简历_{suffix}.pdf"
+    destination = destination_dir / f"{record_id or 0}-{uuid4().hex}.pdf"
     temporary = destination_dir / f".{destination.stem}.{uuid4().hex}.tmp.pdf"
     render = renderer or _render_pdf_with_playwright
 

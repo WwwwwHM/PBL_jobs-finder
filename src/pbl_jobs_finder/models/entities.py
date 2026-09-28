@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -45,6 +53,7 @@ class ResumeRecord(TimestampMixin, Base):
     __tablename__ = "resume_records"
     __table_args__ = (
         CheckConstraint("score >= 0 AND score <= 100", name="ck_resume_score_range"),
+        Index("ix_resume_records_user_history", "phone", "created_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -57,6 +66,9 @@ class ResumeRecord(TimestampMixin, Base):
     missing_keywords_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     suggestions: Mapped[str] = mapped_column(Text, nullable=False)
     optimized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    photo_data_uri: Mapped[str] = mapped_column(
+        Text, default="", server_default="", nullable=False
+    )
     policy_version: Mapped[str] = mapped_column(
         String(64), default="legacy-v1", server_default="legacy-v1", nullable=False
     )
@@ -77,6 +89,7 @@ class InterviewSession(TimestampMixin, Base):
     __tablename__ = "interview_sessions"
     __table_args__ = (
         CheckConstraint("question_rounds >= 0", name="ck_interview_rounds_nonnegative"),
+        Index("ix_interview_sessions_user_history", "phone", "created_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

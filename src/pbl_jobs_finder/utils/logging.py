@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import traceback
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -72,6 +73,20 @@ class _SafeFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         return self._redact(super().format(record))
+
+    def formatException(self, ei) -> str:
+        # Provider bodies, SQL parameters and validation inputs may contain the
+        # whole resume. Keep exception types and stack locations, never values.
+        lines = ["Traceback (exception values omitted):"]
+        error = ei[1]
+        seen: set[int] = set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            lines.append(type(error).__name__)
+            for frame in traceback.extract_tb(error.__traceback__):
+                lines.append(f"  {frame.filename}:{frame.lineno} in {frame.name}")
+            error = error.__cause__ or error.__context__
+        return "\n".join(lines)
 
     def _redact(self, value: str) -> str:
         for secret in self.sensitive_values:
@@ -160,6 +175,14 @@ def configure_logging(
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
     root_logger.setLevel(resolved_level)
+    # HTTP/provider debug output can include entire request or response bodies.
+    for name in ("httpx", "httpcore", "zhipuai", "urllib3", "sqlalchemy.engine"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    # Starlette re-raises unexpected errors after sending its 500 response.
+    # Uvicorn has separate handlers and otherwise prints the unsafe values again.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        for handler in logging.getLogger(name).handlers:
+            handler.setFormatter(formatter)
     logging.captureWarnings(True)
     logging.getLogger(__name__).info(
         "Logging initialized level=%s file=%s retention_days=%s",

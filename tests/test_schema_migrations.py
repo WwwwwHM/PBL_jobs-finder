@@ -42,7 +42,7 @@ class SchemaMigrationTests(unittest.TestCase):
                     item["name"] for item in inspector.get_columns("interview_sessions")
                 }
                 self.assertTrue(
-                    {"policy_version", "grade", "diagnosis_json", "template_id"}
+                    {"policy_version", "grade", "diagnosis_json", "template_id", "photo_data_uri"}
                     <= resume_columns
                 )
                 self.assertTrue(
@@ -60,7 +60,7 @@ class SchemaMigrationTests(unittest.TestCase):
                     resume = connection.execute(
                         text(
                             "SELECT id, policy_version, grade, diagnosis_json, "
-                            "template_id FROM resume_records"
+                            "template_id, photo_data_uri FROM resume_records"
                         )
                     ).one()
                     interview = connection.execute(
@@ -76,7 +76,7 @@ class SchemaMigrationTests(unittest.TestCase):
                         )
                     ).scalar_one()
 
-                self.assertEqual(tuple(resume), (7, "legacy-v1", "", "{}", "classic"))
+                self.assertEqual(tuple(resume), (7, "legacy-v1", "", "{}", "classic", ""))
                 self.assertEqual(
                     tuple(interview),
                     (9, "standard_live", "live", "interview-standard-v1", "[]", "standard"),

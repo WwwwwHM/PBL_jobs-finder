@@ -57,6 +57,7 @@ class Database:
         migration_version = "2026-09-21-m1-policy-metadata"
         required_columns = {
             "resume_records": {
+                "photo_data_uri": "photo_data_uri TEXT NOT NULL DEFAULT ''",
                 "policy_version": (
                     "policy_version VARCHAR(64) NOT NULL DEFAULT 'legacy-v1'"
                 ),
@@ -108,6 +109,17 @@ class Database:
                 text("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:version)"),
                 {"version": "2026-09-22-interview-difficulty"},
             )
+            connection.execute(
+                text("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:version)"),
+                {"version": "2026-09-23-resume-photo"},
+            )
+            for table_name in ("resume_records", "interview_sessions"):
+                columns = {item["name"] for item in inspect(connection).get_columns(table_name)}
+                if {"phone", "created_at", "id"} <= columns:
+                    connection.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS ix_{table_name}_user_history "
+                        f"ON {table_name} (phone, created_at, id)"
+                    ))
 
     @contextmanager
     def session(self) -> Generator[Session, None, None]:

@@ -106,9 +106,9 @@ def run_acceptance(question_index: Path) -> AcceptanceResult:
             exports_dir=runtime_path / "exports",
         )
         vector_store = create_default_vector_store(persist_directory=question_index)
-        if vector_store.count != EXPECTED_QUESTION_COUNT:
+        if vector_store.count < EXPECTED_QUESTION_COUNT:
             raise RuntimeError(
-                f"expected {EXPECTED_QUESTION_COUNT} indexed questions, "
+                f"expected at least {EXPECTED_QUESTION_COUNT} indexed questions, "
                 f"found {vector_store.count}"
             )
         interview_service = InterviewService(

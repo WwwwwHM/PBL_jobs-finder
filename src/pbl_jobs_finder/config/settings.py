@@ -24,6 +24,13 @@ def _positive_int(name: str, default: int) -> int:
     return value
 
 
+def _retry_count(name: str, default: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if not 0 <= value <= 5:
+        raise ValueError(f"{name} must be between zero and five")
+    return value
+
+
 def _positive_float(name: str, default: float) -> float:
     raw_value = os.getenv(name, str(default))
     try:
@@ -85,6 +92,9 @@ class Settings:
     enable_resume_dimensions: bool = False
     enable_resume_templates: bool = False
     enable_interview_modes: bool = False
+    state_backend: str = "memory"
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    redis_prefix: str = "pbl-jobs-finder:"
 
     def ensure_runtime_directories(self) -> None:
         """Create directories used for local persistent data."""
@@ -112,6 +122,15 @@ def get_settings() -> Settings:
         )
     default_database_url = f"sqlite:///{(data_dir / 'job_assistant.db').as_posix()}"
     database_url = os.getenv("DATABASE_URL", "").strip() or default_database_url
+    state_backend = os.getenv("STATE_BACKEND", "memory").strip().lower()
+    if state_backend not in {"memory", "redis"}:
+        raise ValueError("STATE_BACKEND must be memory or redis")
+    redis_url = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0").strip()
+    redis_prefix = os.getenv("REDIS_PREFIX", "pbl-jobs-finder:").strip()
+    if state_backend == "redis" and not redis_url.startswith(("redis://", "rediss://")):
+        raise ValueError("REDIS_URL must use redis:// or rediss://")
+    if not redis_prefix or any(char in redis_prefix for char in "*?[]"):
+        raise ValueError("REDIS_PREFIX must be non-empty and contain no glob characters")
 
     return Settings(
         project_root=PROJECT_ROOT,
@@ -129,7 +148,7 @@ def get_settings() -> Settings:
         zhipu_api_key=os.getenv("ZHIPU_API_KEY") or None,
         zhipu_model=os.getenv("ZHIPU_MODEL", "glm-4-flash"),
         zhipu_timeout_seconds=_positive_float("ZHIPU_TIMEOUT_SECONDS", 30.0),
-        zhipu_max_retries=_positive_int("ZHIPU_MAX_RETRIES", 2),
+        zhipu_max_retries=_retry_count("ZHIPU_MAX_RETRIES", 2),
         aliyun_api_key=os.getenv("ALIYUN_API_KEY") or None,
         aliyun_embedding_model=os.getenv(
             "ALIYUN_EMBEDDING_MODEL", "qwen3.7-text-embedding"
@@ -142,7 +161,7 @@ def get_settings() -> Settings:
         embedding_timeout_seconds=_positive_float(
             "EMBEDDING_TIMEOUT_SECONDS", 30.0
         ),
-        embedding_max_retries=_positive_int("EMBEDDING_MAX_RETRIES", 2),
+        embedding_max_retries=_retry_count("EMBEDDING_MAX_RETRIES", 2),
         resume_policy_version=(
             os.getenv("RESUME_POLICY_VERSION", "legacy-v1").strip() or "legacy-v1"
         ),
@@ -153,4 +172,7 @@ def get_settings() -> Settings:
         enable_resume_dimensions=_boolean("ENABLE_RESUME_DIMENSIONS"),
         enable_resume_templates=_boolean("ENABLE_RESUME_TEMPLATES"),
         enable_interview_modes=_boolean("ENABLE_INTERVIEW_MODES"),
+        state_backend=state_backend,
+        redis_url=redis_url,
+        redis_prefix=redis_prefix,
     )

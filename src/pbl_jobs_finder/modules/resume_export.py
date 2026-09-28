@@ -36,9 +36,7 @@ def create_resume_docx(
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    stem = _safe_filename(target_position) or "新版简历"
-    suffix = str(record_id) if record_id is not None else uuid4().hex[:8]
-    destination = output_path / f"{stem}_优化简历_{suffix}.docx"
+    destination = output_path / f"{record_id or 0}-{uuid4().hex}.docx"
 
     document = Document()
     _configure_document(document)
@@ -50,6 +48,7 @@ def create_resume_docx(
     try:
         document.save(destination)
     except (OSError, ValueError) as exc:
+        destination.unlink(missing_ok=True)
         raise ResumeExportError("Word 简历生成失败，请稍后重试") from exc
     return destination
 

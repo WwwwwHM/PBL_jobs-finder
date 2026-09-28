@@ -9,21 +9,17 @@ import pdfplumber
 from PyPDF2 import PdfReader
 
 from pbl_jobs_finder.exceptions import ResumeOCRError, ResumeParseError
+from pbl_jobs_finder.modules.file_storage import MAX_PDF_SIZE, validate_pdf_upload
+from pbl_jobs_finder.modules.resume_contacts import normalize_resume_contacts
 
-MAX_PDF_SIZE = 12 * 1024 * 1024
 MAX_RESUME_CHARACTERS = 60_000
+MAX_PDF_PAGES = 100
 
 
 def parse_resume_pdf(file_path: str | Path) -> str:
     """Extract normalized text with a second parser when PyPDF2 falls short."""
 
-    path = Path(file_path)
-    if not path.is_file():
-        raise ResumeParseError("找不到上传的简历文件，请重新上传")
-    if path.suffix.lower() != ".pdf":
-        raise ResumeParseError("仅支持 PDF 格式的简历")
-    if path.stat().st_size > MAX_PDF_SIZE:
-        raise ResumeParseError("PDF 文件不能超过 12 MB")
+    path = validate_pdf_upload(file_path)
 
     extraction_errors: list[Exception] = []
     completed_extraction = False
@@ -40,6 +36,8 @@ def parse_resume_pdf(file_path: str | Path) -> str:
         try:
             text = _extract_with_pdfplumber(path)
             completed_extraction = True
+        except ResumeParseError:
+            raise
         except Exception as exc:  # noqa: BLE001 - normalize parser fallback failures
             extraction_errors.append(exc)
 
@@ -66,12 +64,16 @@ def _extract_with_pypdf(path: Path) -> str:
     reader = PdfReader(str(path), strict=False)
     if reader.is_encrypted:
         raise ResumeParseError("暂不支持加密 PDF，请解除密码后重新上传")
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise ResumeParseError("PDF 页数不能超过 100 页")
     pages = [page.extract_text() or "" for page in reader.pages]
     return "\n\n".join(page for page in pages if page.strip())
 
 
 def _extract_with_pdfplumber(path: Path) -> str:
     with pdfplumber.open(path) as document:
+        if len(document.pages) > MAX_PDF_PAGES:
+            raise ResumeParseError("PDF 页数不能超过 100 页")
         pages = [page.extract_text() or "" for page in document.pages]
     return "\n\n".join(page for page in pages if page.strip())
 
@@ -81,7 +83,8 @@ def _normalize_extracted_text(value: str) -> str:
     for raw_line in value.replace("\x00", "").replace("\u00a0", " ").splitlines():
         line = re.sub(r"[ \t]+", " ", raw_line).strip()
         lines.append(line)
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return normalize_resume_contacts(text)
 
 
 def _pdf_contains_images(path: Path) -> bool:

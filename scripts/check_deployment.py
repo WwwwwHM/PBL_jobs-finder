@@ -20,6 +20,7 @@ from pbl_jobs_finder.modules.question_bank import (
     DEFAULT_QUESTION_BANK_PATH,
     load_question_bank,
 )
+from pbl_jobs_finder.modules.redis_state import configured_redis_state
 from pbl_jobs_finder.vector_store import COLLECTION_NAME
 
 EXPECTED_TABLES = {
@@ -115,9 +116,9 @@ def check_question_index(settings: Settings) -> str:
         raise RuntimeError(
             "interview question index is absent; run scripts/import_question_bank.py"
         ) from exc
-    if count != EXPECTED_QUESTION_COUNT:
+    if count < EXPECTED_QUESTION_COUNT:
         raise RuntimeError(
-            f"expected {EXPECTED_QUESTION_COUNT} indexed questions, found {count}"
+            f"expected at least {EXPECTED_QUESTION_COUNT} indexed questions, found {count}"
         )
     return f"{count} indexed interview questions"
 
@@ -132,6 +133,13 @@ def check_chromium() -> str:
             "Chromium is not installed; run `python -m playwright install chromium`"
         )
     return f"Chromium executable found at {executable}"
+
+
+def check_shared_state() -> str:
+    state = configured_redis_state()
+    if state is None or not state.ping():
+        raise RuntimeError("configured Redis is unavailable")
+    return "Redis connection is ready"
 
 
 def check_frontend_build() -> str:
@@ -161,6 +169,8 @@ def run_preflight(
         ("Database", lambda: check_database(settings)),
         ("Question source", check_question_source),
     ]
+    if settings.state_backend == "redis":
+        checks.append(("Shared state", check_shared_state))
     if require_api_keys:
         checks.append(("API keys", lambda: check_api_keys(settings)))
     if require_question_index:

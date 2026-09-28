@@ -58,6 +58,27 @@ def _document_payload() -> dict:
 
 
 class ResumeDocumentTests(unittest.TestCase):
+    def test_joined_email_renders_as_separate_phone_and_email_links(self) -> None:
+        payload = _document_payload()
+        payload["basics"].update(phone="", email="19883177095617213477\\@qq.com")
+        document = parse_resume_document(json.dumps(payload))
+        html = render_resume_html(document)
+        self.assertIn('href="tel:19883177095"', html)
+        self.assertIn('href="mailto:617213477@qq.com"', html)
+        self.assertNotIn("19883177095617213477", html)
+        self.assertIn("19883177095 | 617213477@qq.com", document_to_markdown(document))
+
+    def test_joined_email_does_not_overwrite_a_conflicting_phone(self) -> None:
+        payload = _document_payload()
+        payload["basics"]["email"] = "19883177095617213477@qq.com"
+        with self.assertRaises(ResumeDocumentError):
+            parse_resume_document(json.dumps(payload))
+
+    def test_joined_email_preserves_a_matching_international_phone(self) -> None:
+        basics = ResumeBasics(phone="+86 198-8317-7095", email="19883177095617213477@qq.com")
+        self.assertEqual(basics.phone, "+86 198-8317-7095")
+        self.assertEqual(basics.email, "617213477@qq.com")
+
     def test_model_response_is_parsed_and_normalized(self) -> None:
         payload = _document_payload()
         payload["skills"] = [" Python ", "Python", "FastAPI"]

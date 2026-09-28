@@ -10,7 +10,9 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
+from pbl_jobs_finder.exceptions import EmbeddingServiceError
 from pbl_jobs_finder.models.database import Database
 from pbl_jobs_finder.models.repositories import (
     get_interview_session,
@@ -829,6 +831,19 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
             conversation = json.loads(saved.conversation_json)
             self.assertNotEqual(conversation[-1].get("kind"), "answer")
 
+        used_before = self.quota.status("token-a").used
+        self.client.responses = [
+            json.dumps({"feedback": "回答清楚，建议补充验证指标。", "needs_follow_up": False, "next_question": ""}),
+            self._report_json(),
+        ]
+        recovered = self.service.submit_answer(
+            token="token-a", session_id=started.session_id,
+            answer="我会先止损，再定位根因、灰度修复并组织复盘。",
+            expected_question=final_question,
+        )
+        self.assertTrue(recovered.is_finished)
+        self.assertEqual(self.quota.status("token-a").used, used_before)
+
     def test_answer_requires_valid_input_and_session_ownership(self) -> None:
         started = self.service.start(token="token-a", position="Java 后端工程师")
         with self.assertRaises(InterviewAccessError):
@@ -926,6 +941,19 @@ AI 求职助手：使用 Gradio、ChromaDB 和 GLM 实现简历诊断与模拟�
         self.assertEqual(self.quota.status("token-a").used, 0)
         with self.database.session() as session:
             self.assertEqual(get_recent_interview_sessions(session, "13800138000"), [])
+
+        # Retrieval failures also roll back; removing the fault must permit a
+        # fresh operation on the same service without losing saved state.
+        for error in (RuntimeError("Chroma unavailable"), EmbeddingServiceError("Embedding timeout")):
+            with (
+                patch.object(self.store, "search_for_interview", side_effect=error),
+                self.assertRaises(type(error)),
+            ):
+                self.service.start(token="token-a", position="后端工程师")
+            self.assertEqual(self.quota.status("token-a").used, 0)
+        recovered = self.service.start(token="token-a", position="后端工程师")
+        self.assertGreater(recovered.session_id, 0)
+        self.assertEqual(self.quota.status("token-a").used, 1)
 
     def test_database_failure_rolls_back_quota(self) -> None:
         service = InterviewService(

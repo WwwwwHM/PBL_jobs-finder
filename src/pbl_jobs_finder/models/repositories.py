@@ -57,6 +57,7 @@ def create_resume_record(
     grade: str = "",
     diagnosis: dict[str, Any] | None = None,
     template_id: str = "classic",
+    photo_data_uri: str = "",
 ) -> ResumeRecord:
     get_or_create_user(session, phone)
     record = ResumeRecord(
@@ -71,6 +72,7 @@ def create_resume_record(
         grade=grade,
         diagnosis_json=json.dumps(diagnosis or {}, ensure_ascii=False),
         template_id=template_id,
+        photo_data_uri=photo_data_uri,
     )
     session.add(record)
     session.flush()
@@ -98,6 +100,7 @@ def update_resume_record(session: Session, record_id: int, **changes: Any) -> Re
         "grade",
         "diagnosis_json",
         "template_id",
+        "photo_data_uri",
     }
     _apply_changes(record, changes, allowed)
     session.flush()

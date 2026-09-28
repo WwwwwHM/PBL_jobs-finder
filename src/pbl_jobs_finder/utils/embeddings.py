@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
@@ -49,7 +50,7 @@ class AliyunEmbedding:
             raise EmbeddingConfigurationError("未配置 ALIYUN_API_KEY，无法生成向量")
         if not model.strip() or not endpoint.strip():
             raise EmbeddingConfigurationError("Embedding 模型或服务地址未配置")
-        if dimensions <= 0 or timeout_seconds <= 0 or max_retries < 0:
+        if dimensions <= 0 or timeout_seconds <= 0 or not 0 <= max_retries <= 5:
             raise EmbeddingConfigurationError("Embedding 数值配置无效")
         self._api_key = api_key
         self.model = model.strip()
@@ -88,7 +89,8 @@ class AliyunEmbedding:
                     timeout=self.timeout_seconds,
                 )
             except requests.RequestException as exc:
-                if attempt < self.max_retries:
+                transient = isinstance(exc, (requests.Timeout, requests.ConnectionError))
+                if transient and not isinstance(exc, requests.exceptions.SSLError) and attempt < self.max_retries:
                     self._sleeper(0.25 * (2**attempt))
                     continue
                 raise EmbeddingServiceError(
@@ -136,7 +138,10 @@ class AliyunEmbedding:
                 f"Embedding 向量维度异常，预期 {self.dimensions} 维"
             )
         try:
-            return [float(value) for value in raw_vector]
+            vector = [float(value) for value in raw_vector]
+            if not all(math.isfinite(value) for value in vector):
+                raise ValueError("Non-finite embedding")
+            return vector
         except (TypeError, ValueError) as exc:
             raise EmbeddingServiceError("Embedding 向量包含非法数值") from exc
 

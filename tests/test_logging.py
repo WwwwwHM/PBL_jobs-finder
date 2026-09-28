@@ -56,10 +56,8 @@ class LoggingTests(unittest.TestCase):
                 self.assertIn("operation=test.failure", content)
                 self.assertIn("record_id=42", content)
                 self.assertIn("Traceback", content)
-                self.assertIn("api_key=<redacted>", content)
-                self.assertIn("token=<redacted>", content)
-                self.assertIn("1**********", content)
-                self.assertIn("<redacted-email>", content)
+                self.assertIn("RuntimeError", content)
+                self.assertIn("exception values omitted", content)
                 self.assertNotIn("provider-secret-123", content)
                 self.assertNotIn("session-secret-456", content)
                 self.assertNotIn("13800138000", content)
@@ -185,9 +183,11 @@ class LoggingTests(unittest.TestCase):
                     item for item in logging.getLogger().handlers
                     if isinstance(item, TimedRotatingFileHandler)
                 )
-                with patch.object(handler, "rotate", side_effect=PermissionError("denied")):
-                    with self.assertRaisesRegex(PermissionError, "denied"):
-                        handler.doRollover()
+                with (
+                    patch.object(handler, "rotate", side_effect=PermissionError("denied")),
+                    self.assertRaisesRegex(PermissionError, "denied"),
+                ):
+                    handler.doRollover()
             finally:
                 shutdown_logging()
 

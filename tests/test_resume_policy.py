@@ -71,6 +71,37 @@ def _dimensional_response() -> str:
 
 
 class ResumePolicyTests(unittest.TestCase):
+    def test_dimensional_diagnosis_refines_only_skills(self) -> None:
+        from unittest.mock import Mock
+
+        invalid = json.loads(_dimensional_response())
+        invalid["optimized_text"] += "\n\n## 专业技能\n" + "、".join(
+            f"skill{i}" for i in range(13)
+        )
+        client = Mock()
+        client.complete.side_effect = [json.dumps(invalid), '{"selected_ids":[12,1]}']
+        result = diagnose_resume(
+            "张三，五年 Python 后端经验，负责订单服务开发与维护。",
+            "Python 后端工程师", client=client, enable_dimensions=True,
+        )
+        self.assertEqual(client.complete.call_count, 2)
+        self.assertEqual(result.score, 73)
+        self.assertIn(json.loads(_dimensional_response())["optimized_text"], result.optimized_text)
+        self.assertIn("skill12、skill1", result.optimized_text)
+
+    def test_dimensional_diagnosis_restores_contact_boundaries(self) -> None:
+        response = json.loads(_dimensional_response())
+        response["optimized_text"] = "# 伍海鸣\n\n19883177095617213477\\@qq.com | 杭州"
+        client = FakeChatClient(json.dumps(response))
+        result = diagnose_resume(
+            "伍海鸣\n19883177095617213477@qq.com | 杭州\nPython 开发工程师",
+            "Python 后端工程师",
+            client=client,
+            enable_dimensions=True,
+        )
+        self.assertIn("电话：19883177095 | 邮箱：617213477@qq.com", client.user_prompt)
+        self.assertIn("电话：19883177095 | 邮箱：617213477@qq.com", result.optimized_text)
+
     def test_policy_calculates_weighted_score_and_grade_server_side(self) -> None:
         policy = get_resume_policy()
         payload = policy.parse_response(_dimensional_response())
